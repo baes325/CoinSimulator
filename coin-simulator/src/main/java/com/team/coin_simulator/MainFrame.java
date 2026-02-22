@@ -88,6 +88,36 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
         alertService = new PriceAlertService(this);
         
         setVisible(true);
+        syncMarketDataBackground();
+    }
+    
+    private void syncMarketDataBackground() {
+        new Thread(() -> {
+            System.out.println("[MainFrame] 백그라운드에서 캔들 데이터 동기화를 시작합니다...");
+            try {
+                // 필요한 경우에만 최초 1회 실행
+                // DownloadDatabase.importData(1); 
+                
+                // 평상시: DB에 있는 최신 시간부터 현재까지만 업데이트
+                DownloadDatabase.updateData(1); 
+                
+                System.out.println("[MainFrame] 데이터 동기화 완료!");
+                
+                // 데이터 업데이트가 완료된 후 UI(차트나 리스트)를 새로고침해야 한다면
+                // 반드시 EDT(Event Dispatch Thread)에서 실행되도록 invokeLater 사용
+                SwingUtilities.invokeLater(() -> {
+                    // 예시: 현재 선택된 코인의 차트를 다시 그리기
+                    // if (chartPanel != null) {
+                    //     chartPanel.refreshChartData(); 
+                    // }
+                    System.out.println("[MainFrame] UI 데이터 갱신 완료");
+                });
+                
+            } catch (Exception e) {
+                System.err.println("[MainFrame] 데이터 동기화 중 오류 발생: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }).start();
     }
     
     private void initComponents() {
@@ -320,27 +350,7 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
         
         // UI 생성 및 실행
         SwingUtilities.invokeLater(() -> {
-            MainFrame mainFrame = new MainFrame("test_user1");
-            
-            // UI를 띄운 직후, 백그라운드 스레드를 생성하여 데이터 업데이트 실행
-            new Thread(() -> {
-                System.out.println("백그라운드에서 캔들 데이터 동기화를 시작합니다...");
-                
-                // 필요한 경우에만 최초 1회 실행
-                // DownloadDatabase.importData(1); 
-                
-                // 평상시: DB에 있는 최신 시간부터 현재까지만 업데이트
-                DownloadDatabase.updateData(1); 
-                
-                System.out.println("데이터 동기화 완료!");
-                
-                // (선택) 업데이트가 완료된 후 MainFrame의 차트나 리스트를 새로고침하고 싶다면
-                // 반드시 다시 SwingUtilities.invokeLater를 사용해서 UI를 건드려야 합니다.
-                // SwingUtilities.invokeLater(() -> {
-                //     mainFrame.refreshMarketData(); // MainFrame에 새로고침 메소드를 만들었다면 호출
-                // });
-                
-            }).start(); // 스레드 시작
+            new MainFrame("test_user1");
         });
     }
 }
