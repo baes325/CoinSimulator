@@ -24,6 +24,130 @@ public class DownloadDatabase {
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     /**
+     * DB에 저장된 마지막 시간부터 현재 시점까지의 누락된 데이터를 보충(업데이트)합니다.
+     * @param unit 분 단위 (예: 1, 3, 5, 15, 30, 60, 240)
+     */
+    public static void updateData(int unit) {
+        System.out.println("=== 최신 데이터 업데이트 시작 ===");
+        System.out.println("수집 단위: " + unit + "분봉");
+
+        for (String code : CoinConfig.getCodes()) {
+            String market = "KRW-" + code;
+            System.out.println("\n[" + market + "] 업데이트 확인 중...");
+            
+            // 각 코인별로 DB의 마지막 시간을 확인하고 누락된 최신 데이터를 가져옵니다.
+            updateCoinHistory(market, unit);
+        }
+        
+        System.out.println("\n=== 모든 코인 데이터 업데이트 완료 ===");
+    }
+
+    private static void updateCoinHistory(String market, int unit) {
+        LocalDateTime lastSavedDate = null;
+        
+        // 1. DB에서 해당 코인의 가장 최근(MAX) 날짜를 조회합니다.
+        String checkSql = "SELECT MAX(candle_date_time_utc) FROM market_candle WHERE market = ? AND unit = ?";
+        
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement checkStmt = conn.prepareStatement(checkSql)) {
+            
+            checkStmt.setString(1, market);
+            checkStmt.setInt(2, unit);
+            try (java.sql.ResultSet rs = checkStmt.executeQuery()) {
+                if (rs.next() && rs.getTimestamp(1) != null) {
+                    lastSavedDate = rs.getTimestamp(1).toLocalDateTime();
+                    System.out.println(" ↳ 마지막 저장 시간: " + lastSavedDate.format(FORMATTER) + " -> 현재까지 보충 수집 진행");
+                } else {
+                    System.out.println(" ↳ 기존 데이터가 없습니다. 업데이트 대신 전체 수집(importData)을 진행해 주세요.");
+                    return; // 데이터가 아예 없으면 업데이트를 건너뜁니다.
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("DB 조회 실패: " + e.getMessage());
+            return;
+        }
+
+        // 2. 현재 시간부터 과거로 거슬러 올라가며 데이터 수집 (lastSavedDate에 도달할 때까지)
+        String toDate = "";  // 처음엔 빈 값으로 보내어 '현재 시간' 기준으로 가져옴
+        boolean isFinished = false;
+        int totalSaved = 0;
+
+        String insertSql = "INSERT INTO market_candle " +
+                     "(market, candle_date_time_utc, candle_date_time_kst, opening_price, high_price, low_price, " +
+                     "trade_price, timestamp, candle_acc_trade_price, candle_acc_trade_volume, unit) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+                     "ON DUPLICATE KEY UPDATE trade_price = VALUES(trade_price)";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(insertSql)) {
+
+            conn.setAutoCommit(false); 
+
+            while (!isFinished) {
+                try {
+                    // API 호출
+                    String jsonResponse = fetchCandles(market, unit, 200, toDate);
+                    JSONArray candles = new JSONArray(jsonResponse);
+
+                    if (candles.isEmpty()) {
+                        break; 
+                    }
+
+                    int batchCount = 0;
+
+                    for (int i = 0; i < candles.length(); i++) {
+                        JSONObject c = candles.getJSONObject(i);
+                        String utcRaw = c.getString("candle_date_time_utc"); 
+                        LocalDateTime candleDate = LocalDateTime.parse(utcRaw.replace("T", " "), DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+
+                        // 핵심 로직: 수집한 캔들 시간이 DB에 있는 마지막 시간보다 작거나 같아지면 (즉, 이미 있는 데이터면) 수집 중단
+                        if (!candleDate.isAfter(lastSavedDate)) {
+                            isFinished = true;
+                            break; // for 루프 탈출
+                        }
+
+                        pstmt.setString(1, market);
+                        pstmt.setTimestamp(2, Timestamp.valueOf(utcRaw.replace("T", " ")));
+                        pstmt.setTimestamp(3, Timestamp.valueOf(c.getString("candle_date_time_kst").replace("T", " ")));
+                        pstmt.setBigDecimal(4, c.getBigDecimal("opening_price"));
+                        pstmt.setBigDecimal(5, c.getBigDecimal("high_price"));
+                        pstmt.setBigDecimal(6, c.getBigDecimal("low_price"));
+                        pstmt.setBigDecimal(7, c.getBigDecimal("trade_price"));
+                        pstmt.setLong(8, c.getLong("timestamp"));
+                        pstmt.setBigDecimal(9, c.getBigDecimal("candle_acc_trade_price"));
+                        pstmt.setBigDecimal(10, c.getBigDecimal("candle_acc_trade_volume"));
+                        pstmt.setInt(11, unit);
+                        pstmt.addBatch();
+                        batchCount++;
+                    }
+                    
+                    if (batchCount > 0) {
+                        pstmt.executeBatch(); 
+                        pstmt.clearBatch();
+                        totalSaved += batchCount;
+                        System.out.print("."); 
+                    }
+
+                    // 다음 페이지(더 과거) 조회를 위해 이번 요청에서 받은 가장 마지막(과거) 캔들의 시간을 toDate로 설정
+                    JSONObject lastCandle = candles.getJSONObject(candles.length() - 1);
+                    toDate = lastCandle.getString("candle_date_time_utc") + "Z"; 
+
+                    Thread.sleep(120); // API 호출 제한 방지 (Rate Limit)
+
+                } catch (Exception e) {
+                    System.err.println("\n[Error] " + market + " 업데이트 중단: " + e.getMessage());
+                    break; 
+                }
+            }
+            
+            conn.commit(); 
+            System.out.println(" 완료 (새로 추가된 데이터: " + totalSaved + "개)");
+            
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+    /**
      * 등록된 모든 코인의 6개월 치 데이터를 수집합니다.
      * @param unit 분 단위 (예: 1, 3, 5, 15, 30, 60, 240)
      */

@@ -1,14 +1,29 @@
 package com.team.coin_simulator;
 
-import javax.swing.*;
-import java.awt.*;
-import com.team.coin_simulator.Market_Panel.HistoryPanel;
+import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.Color;
+import java.awt.Cursor;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Font;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JFrame;
+import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+
 import com.team.coin_simulator.Alerts.PriceAlertService;
 import com.team.coin_simulator.Market_Order.OrderPanel;
+import com.team.coin_simulator.Market_Panel.HistoryPanel;
 import com.team.coin_simulator.chart.CandleChartPanel;
 import com.team.coin_simulator.orderbook.OrderBookPanel;
+
 import DAO.UpbitWebSocketDao;
 import Investment_details.Investment_details_MainPanel;
+import databasetestdata.DownloadDatabase;
 
 /**
  * 메인 프레임 - 전체 화면 전환 방식
@@ -296,14 +311,36 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
     
     
     public static void main(String[] args) {
+        // UI 룩앤필 설정
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception e) {
             e.printStackTrace();
         }
         
+        // UI 생성 및 실행
         SwingUtilities.invokeLater(() -> {
-            new MainFrame("test_user1");
+            MainFrame mainFrame = new MainFrame("test_user1");
+            
+            // UI를 띄운 직후, 백그라운드 스레드를 생성하여 데이터 업데이트 실행
+            new Thread(() -> {
+                System.out.println("백그라운드에서 캔들 데이터 동기화를 시작합니다...");
+                
+                // 필요한 경우에만 최초 1회 실행
+                // DownloadDatabase.importData(1); 
+                
+                // 평상시: DB에 있는 최신 시간부터 현재까지만 업데이트
+                DownloadDatabase.updateData(1); 
+                
+                System.out.println("데이터 동기화 완료!");
+                
+                // (선택) 업데이트가 완료된 후 MainFrame의 차트나 리스트를 새로고침하고 싶다면
+                // 반드시 다시 SwingUtilities.invokeLater를 사용해서 UI를 건드려야 합니다.
+                // SwingUtilities.invokeLater(() -> {
+                //     mainFrame.refreshMarketData(); // MainFrame에 새로고침 메소드를 만들었다면 호출
+                // });
+                
+            }).start(); // 스레드 시작
         });
     }
 }
