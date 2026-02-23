@@ -11,11 +11,11 @@ import java.awt.*;
 import java.util.List;
 
 /**
- * 투자손익 메인 패널 (ExecutionDTO 직접 사용 버전)
+ * 투자손익 메인 패널
  *
  * 레이아웃:
  * ┌─────────────────────────────────────────┐
- * │  ProfitLoss_PeriodSelector    (TOP)     │ ← 기간 선택 버튼
+ * │  ProfitLoss_PeriodSelector    (TOP)     │
  * ├─────────────────────────────────────────┤
  * │  ProfitLoss_SummaryStatPanel  (NORTH)   │
  * ├─────────────────────────────────────────┤
@@ -33,111 +33,96 @@ public class ProfitLoss_MainPanel extends JPanel {
 
     private final ProfitLossDAO dao;
     private final String userId;
-    private List<ExecutionDTO> currentExecutions;
-    private int currentDays = 30; // 현재 조회 기간
+    private long sessionId; // [핵심] 세션 필터 기준
 
-    /**
-     * 투자손익 메인 패널 생성자
-     * 
-     * @param userId 사용자 ID
-     */
-    public ProfitLoss_MainPanel(String userId) {
-        this.userId = userId;
-        this.dao = new ProfitLossDAO();
-        
+    private List<ExecutionDTO> currentExecutions;
+    private int currentDays = 30;
+
+    public ProfitLoss_MainPanel(String userId, long sessionId) {
+        this.userId    = userId;
+        this.sessionId = sessionId;
+        this.dao       = new ProfitLossDAO();
+
         setLayout(new BorderLayout(0, 0));
         setBackground(Color.WHITE);
 
-        // 1. 하위 패널 생성
         periodSelector = new ProfitLoss_PeriodSelector();
         summaryPanel   = new ProfitLoss_SummaryStatPanel();
         chartAreaPanel = new ProfitLoss_ChartAreaPanel();
         tablePanel     = new ProfitLoss_DetailTablePanel();
 
-        // 2. 기간 선택 리스너 등록
+        // 기간 선택 리스너
         periodSelector.addPeriodChangeListener(days -> {
             currentDays = days;
             loadRecentData(days);
         });
 
-        // 3. 상단 컨테이너 (기간선택 + 요약 + 차트)
-        JPanel topContainer = new JPanel(new BorderLayout(0, 0));
-        topContainer.setBackground(Color.WHITE);
-        
-        // 기간 선택 버튼 영역
+        // 레이아웃 조립
         JPanel periodWrapper = new JPanel(new BorderLayout());
         periodWrapper.setBackground(Color.WHITE);
         periodWrapper.setBorder(new MatteBorder(0, 0, 1, 0, new Color(230, 230, 230)));
         periodWrapper.add(periodSelector, BorderLayout.CENTER);
-        
-        // 요약 + 차트 영역
+
         JPanel summaryChartPanel = new JPanel(new BorderLayout(0, 0));
         summaryChartPanel.setBackground(Color.WHITE);
         summaryChartPanel.setBorder(new EmptyBorder(0, 0, 4, 0));
         summaryChartPanel.add(summaryPanel,   BorderLayout.NORTH);
         summaryChartPanel.add(chartAreaPanel, BorderLayout.CENTER);
-        
-        topContainer.add(periodWrapper, BorderLayout.NORTH);
+
+        JPanel topContainer = new JPanel(new BorderLayout(0, 0));
+        topContainer.setBackground(Color.WHITE);
+        topContainer.add(periodWrapper,   BorderLayout.NORTH);
         topContainer.add(summaryChartPanel, BorderLayout.CENTER);
 
-        // 4. 테이블 높이 고정
         tablePanel.setPreferredSize(new Dimension(0, 260));
 
-        // 5. 전체 레이아웃
         add(topContainer, BorderLayout.CENTER);
         add(tablePanel,   BorderLayout.SOUTH);
 
-        // 6. 초기 데이터 로드 (최근 30일)
         loadRecentData(30);
     }
 
+    // ── 데이터 로드 ───────────────────────────────────────────────
+
     /**
-     * 최근 N일간의 체결 데이터를 DB에서 조회하여 화면에 표시
-     * 
+     * 최근 N일간 체결 데이터를 DB에서 조회하여 화면에 표시
+     * [핵심] sessionId를 DAO에 전달하여 해당 세션의 데이터만 조회
+     *
      * @param days 조회할 일수
      */
     public void loadRecentData(int days) {
-        this.currentExecutions = dao.getSellExecutions(userId, days);
+        this.currentExecutions = dao.getSellExecutions(userId, sessionId, days); // sessionId 적용
         refreshAll();
     }
 
-    /**
-     * 외부에서 데이터를 직접 설정 (테스트용)
-     * 
-     * @param executions 체결 내역 리스트
-     */
+    /** 외부에서 데이터를 직접 설정 (테스트용) */
     public void loadData(List<ExecutionDTO> executions) {
         this.currentExecutions = executions;
         refreshAll();
     }
 
-    /**
-     * 모든 하위 패널 갱신
-     */
+    // ── UI 갱신 ───────────────────────────────────────────────────
+
     private void refreshAll() {
+        // 초기 자본금 — 세션 기준 조회
+        long initialSeedMoney = dao.getInitialSeedMoney(userId, sessionId); // sessionId 적용
+
         if (currentExecutions == null || currentExecutions.isEmpty()) {
-            // 데이터 없을 때 초기화
-            summaryPanel.updateSummary(0, 0.0, dao.getInitialSeedMoney(userId));
+            summaryPanel.updateSummary(0, 0.0, initialSeedMoney);
             chartAreaPanel.updateCharts(currentExecutions, userId);
             tablePanel.updateTable(currentExecutions, userId);
             return;
         }
 
-        // 1. 총 실현 손익 계산
-        long totalPnl = dao.getTotalRealizedPnl(userId).longValue();
-        
-        // 2. 초기 자본금
-        long initialSeedMoney = dao.getInitialSeedMoney(userId);
-        
-        // 3. 총 수익률
-        double totalYield = initialSeedMoney > 0 
-            ? ((double) totalPnl / initialSeedMoney) * 100 
+        // 총 실현 손익 — 세션 기준 조회
+        long totalPnl = dao.getTotalRealizedPnl(userId, sessionId).longValue(); // sessionId 적용
+
+        double totalYield = initialSeedMoney > 0
+            ? ((double) totalPnl / initialSeedMoney) * 100
             : 0.0;
-        
-        // 4. 평균 투자금액 (간단히 초기자본 + 손익/2로 근사)
+
         long avgInvestment = initialSeedMoney + (totalPnl / 2);
 
-        // 5. 각 패널 업데이트
         summaryPanel.updateSummary(totalPnl, totalYield, avgInvestment);
         chartAreaPanel.updateCharts(currentExecutions, userId);
         tablePanel.updateTable(currentExecutions, userId);
@@ -146,28 +131,16 @@ public class ProfitLoss_MainPanel extends JPanel {
         repaint();
     }
 
-    /**
-     * 데이터 새로고침 (DB 재조회)
-     * 
-     * @param days 조회할 일수
-     */
+    // ── 외부 API ─────────────────────────────────────────────────
+
+    /** 외부에서 데이터 새로고침 */
     public void refresh(int days) {
         loadRecentData(days);
     }
 
-    /**
-     * 독립 실행 테스트
-     */
-//    public static void main(String[] args) {
-//        SwingUtilities.invokeLater(() -> {
-//            JFrame frame = new JFrame("투자손익 테스트");
-//            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-//            frame.setSize(1000, 700);
-//            frame.setLocationRelativeTo(null);
-//
-//            ProfitLoss_MainPanel panel = new ProfitLoss_MainPanel("user_01");
-//            frame.add(panel);
-//            frame.setVisible(true);
-//        });
-//    }
+    /** 세션 변경 시 호출 — 새 세션의 투자손익을 다시 로드 */
+    public void setSessionId(long sessionId) {
+        this.sessionId = sessionId;
+        loadRecentData(currentDays); // 현재 기간 유지하면서 세션만 교체
+    }
 }

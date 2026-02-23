@@ -42,15 +42,16 @@ public class AssetDAO {
     }
 
     // 2. [추가된 메서드] 모든 자산 조회 (차트 및 요약용 - KRW 포함)
-    public List<AssetDTO> getAllAssets(String userId) {
+    public List<AssetDTO> getAllAssets(String userId, long sessionId) {
         List<AssetDTO> list = new ArrayList<>();
-        // KRW 포함 모든 자산 조회 (currency != 'KRW' 조건 제거)
-        String sql = "SELECT * FROM assets WHERE user_id = ? AND (balance > 0 OR locked > 0)";
+        // WHERE 절에 session_id = ? 추가
+        String sql = "SELECT * FROM assets WHERE user_id = ? AND session_id = ? AND (balance > 0 OR locked > 0)";
 
         try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             
             pstmt.setString(1, userId);
+            pstmt.setLong(2, sessionId);
             
             try (ResultSet rs = pstmt.executeQuery()) {
                 while (rs.next()) {
@@ -117,6 +118,27 @@ public class AssetDAO {
                 return rs.next();
             }
             
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+    
+    // 1. 자산 생성 메서드 수정 (sessionId 추가)
+    public static boolean createInitialAsset(String userId, long sessionId, BigDecimal initialAmount) {
+        // session_id 부분에 ? 파라미터 적용
+        String sql = "INSERT INTO assets (user_id, currency, session_id, balance, locked, avg_buy_price) " +
+                     "VALUES (?, 'KRW', ?, ?, 0, 0)";
+        
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, userId);
+            pstmt.setLong(2, sessionId); // 세션 ID 바인딩
+            pstmt.setBigDecimal(3, initialAmount);
+            
+            int result = pstmt.executeUpdate();
+            return result > 0;
         } catch (Exception e) {
             e.printStackTrace();
             return false;
