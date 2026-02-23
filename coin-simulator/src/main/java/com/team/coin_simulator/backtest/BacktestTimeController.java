@@ -1,7 +1,6 @@
 package com.team.coin_simulator.backtest;
 
 import DAO.UpbitWebSocketDao;
-import com.team.coin_simulator.TimeController;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -257,6 +256,15 @@ public class BacktestTimeController {
     public void pause() {
         paused = true;
         System.out.println("[BacktestTimeController] 일시 정지");
+        
+        // 🚀 [추가된 코드] 일시정지 버튼을 누를 때 즉시 DB에 진행 시간 저장
+        if (currentSimTime != null) {
+            final LocalDateTime snapshot = currentSimTime;
+            final long sid = sessionId;
+            Thread.ofVirtual().start(() -> 
+                sessionDAO.updateCurrentSimTime(sid, snapshot)
+            );
+        }
     }
 
     /** 재개 */
@@ -291,6 +299,12 @@ public class BacktestTimeController {
         paused  = false;
         if (tickFuture != null) tickFuture.cancel(true);
         if (scheduler  != null) scheduler.shutdownNow();
+        
+        // 🚀 [추가된 코드] 백테스팅이 중단될 때 강제로 즉시 DB에 진행 시간 저장
+        // 스레드 풀이 강제 종료되므로 비동기가 아닌 동기(Synchronous) 방식으로 즉시 실행하여 안전하게 기록
+        if (currentSimTime != null && sessionId > 0) {
+            sessionDAO.updateCurrentSimTime(sessionId, currentSimTime);
+        }
     }
 
     // ════════════════════════════════════════════════

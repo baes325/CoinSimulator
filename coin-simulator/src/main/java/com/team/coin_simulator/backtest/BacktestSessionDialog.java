@@ -11,6 +11,7 @@ import java.awt.event.MouseEvent;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -55,10 +56,11 @@ public class BacktestSessionDialog extends JDialog {
 
     private final String              userId;
     private final BacktestSessionDAO  dao    = new BacktestSessionDAO();
+    
 
     /** 최종 선택/생성된 세션 (null = 취소) */
     private SessionDTO selectedSession = null;
-
+    private List<SessionDTO> currentSessionList = new ArrayList<>();
     // ── UI 컴포넌트 ────────────────────────────────
     private JTable  sessionTable;
     private DefaultTableModel tableModel;
@@ -233,16 +235,21 @@ public class BacktestSessionDialog extends JDialog {
 
     /** [입장] 버튼 — 선택된 기존 세션으로 진입 */
     private void onEnterClicked() {
-        int row = sessionTable.getSelectedRow();
-        if (row < 0) {
+        int viewRow = sessionTable.getSelectedRow();
+        if (viewRow < 0) {
             JOptionPane.showMessageDialog(this, "세션을 선택해주세요.", "알림", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        // 테이블 행 인덱스 → 실제 DTO 목록에서 가져오기
-        List<SessionDTO> sessions = dao.getBacktestSessions(userId);
-        if (row < sessions.size()) {
-            selectedSession = sessions.get(row);
+        
+        // 🚀 [추가] JTable에서 헤더 정렬 등을 했을 경우를 대비해 View 인덱스를 Model 인덱스로 변환
+        int modelRow = sessionTable.convertRowIndexToModel(viewRow);
+
+        // 🚀 [수정] DB에서 새로 조회하지 않고, 테이블을 그릴 때 사용했던 currentSessionList에서 가져옴
+        if (modelRow >= 0 && modelRow < currentSessionList.size()) {
+            selectedSession = currentSessionList.get(modelRow);
             dispose();
+        } else {
+            JOptionPane.showMessageDialog(this, "세션 정보를 불러오는데 실패했습니다.", "오류", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -354,10 +361,12 @@ public class BacktestSessionDialog extends JDialog {
 
     private void refreshTable() {
         tableModel.setRowCount(0);
-        List<SessionDTO> list = dao.getBacktestSessions(userId);
+        
+        //조회한 데이터를 지역 변수가 아닌 전역 변수(currentSessionList)에 저장합니다.
+        currentSessionList = dao.getBacktestSessions(userId);
         DateTimeFormatter f = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
-        for (SessionDTO s : list) {
+        for (SessionDTO s : currentSessionList) {
             LocalDateTime start   = s.getStartSimTime() != null ? s.getStartSimTime().toLocalDateTime() : null;
             LocalDateTime end     = start != null ? start.plusMonths(1) : null;
             LocalDateTime current = s.getCurrentSimTime() != null ? s.getCurrentSimTime().toLocalDateTime() : start;
