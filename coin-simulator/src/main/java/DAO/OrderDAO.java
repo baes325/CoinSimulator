@@ -5,6 +5,7 @@ import DTO.OrderDTO;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.math.BigDecimal;
 
 public class OrderDAO {
@@ -383,4 +384,54 @@ public List<OrderDTO> checkAndExecuteLimitOrders(String market, BigDecimal curre
         }
         return executedOrders;
     }
+
+//유저의 자산(Balance, Locked) 정보를 가져오는 메서드
+public void getUserAssets(String userId, Map<String, BigDecimal> balanceMap, Map<String, BigDecimal> lockedMap) {
+    String sql = "SELECT currency, balance, locked FROM assets WHERE user_id = ?";
+    try (Connection conn = DBConnection.getConnection();
+         PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        
+        pstmt.setString(1, userId);
+        try (ResultSet rs = pstmt.executeQuery()) {
+            while (rs.next()) {
+                String curr = rs.getString("currency");
+                balanceMap.put(curr, rs.getBigDecimal("balance"));
+                lockedMap.put(curr, rs.getBigDecimal("locked"));
+            }
+        }
+    } catch (SQLException e) {
+        System.err.println("자산 정보 로드 실패: " + e.getMessage());
+        e.printStackTrace();
+    }
+}
+
+//유저의 미체결 대기 주문(WAIT) 목록을 가져오는 메서드
+public List<OrderDTO> getOpenOrders(String userId) {
+    List<OrderDTO> openOrders = new ArrayList<>();
+    String sql = "SELECT * FROM orders WHERE user_id = ? AND status = 'WAIT'";
+    
+    try (Connection conn = DBConnection.getConnection();
+         PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        
+        pstmt.setString(1, userId);
+        try (ResultSet rs = pstmt.executeQuery()) {
+            while (rs.next()) {
+                OrderDTO order = new OrderDTO();
+                order.setOrderId(rs.getLong("order_id"));
+                order.setSide(rs.getString("side"));
+                order.setOriginalPrice(rs.getBigDecimal("original_price"));
+                order.setOriginalVolume(rs.getBigDecimal("original_volume"));
+                order.setRemainingVolume(rs.getBigDecimal("remaining_volume"));
+                order.setStatus(rs.getString("status"));
+                order.setMarket(rs.getString("market")); // market 정보(예: KRW-BTC)도 DTO에 담습니다.
+                
+                openOrders.add(order);
+            }
+        }
+    } catch (SQLException e) {
+        System.err.println("미체결 주문 로드 실패: " + e.getMessage());
+        e.printStackTrace();
+    	}
+    return openOrders;
+	}
 }
