@@ -18,12 +18,16 @@ import javax.swing.UIManager;
 import com.team.coin_simulator.Alerts.PriceAlertService;
 import com.team.coin_simulator.Market_Order.OrderPanel;
 import com.team.coin_simulator.Market_Panel.HistoryPanel;
+import com.team.coin_simulator.backtest.BacktestTimeControlPanel;
+import com.team.coin_simulator.backtest.BacktestTimeController;
+import com.team.coin_simulator.backtest.CandleChartBacktestAdapter;
 import com.team.coin_simulator.chart.CandleChartPanel;
 import com.team.coin_simulator.orderbook.OrderBookPanel;
 
 import DAO.UpbitWebSocketDao;
 import Investment_details.Investment_details_MainPanel;
 import databasetestdata.DownloadDatabase;
+
 
 /**
  * 메인 프레임 - 전체 화면 전환 방식
@@ -69,6 +73,9 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
     //알림 감시자
     private PriceAlertService alertService;
 
+    private BacktestTimeControlPanel backtestControlPanel;
+    private CandleChartBacktestAdapter chartBacktestAdapter;
+    
     public MainFrame(String userId) {
         super("가상화폐 모의투자 시스템");
         this.currentUserId = userId;
@@ -137,6 +144,8 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
         // 2-2. 투자내역 화면 생성
         investmentPanel = new Investment_details_MainPanel(currentUserId);
         
+        chartBacktestAdapter = new CandleChartBacktestAdapter(chartPanel, historyPanel);
+        BacktestTimeController.getInstance().addTickListener(chartBacktestAdapter);
         // 카드에 추가
         mainContentPanel.add(tradingPanel, CARD_TRADING);
         mainContentPanel.add(investmentPanel, CARD_INVESTMENT);
@@ -155,8 +164,11 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
         panel.setBackground(Color.WHITE);
         
         // 왼쪽: 시간 제어 패널
-        timeControlPanel = new TimeControlPanel();
-        panel.add(timeControlPanel, BorderLayout.CENTER);
+//        timeControlPanel = new TimeControlPanel();
+//        panel.add(timeControlPanel, BorderLayout.CENTER);
+        
+        backtestControlPanel = new BacktestTimeControlPanel(this, currentUserId);
+        panel.add(backtestControlPanel, BorderLayout.CENTER);
         
         // 오른쪽: 화면 전환 버튼
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 10));
