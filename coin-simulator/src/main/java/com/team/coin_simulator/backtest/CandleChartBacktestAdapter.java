@@ -103,7 +103,7 @@ public class CandleChartBacktestAdapter implements BacktestTimeController.Backte
 
     private int calcChartInterval(BacktestSpeed speed) {
         return switch (speed) {
-            case SPEED_1X  -> 4;
+            case SPEED_1X  -> 1;
             case SPEED_10X -> 10;
             case SPEED_30X -> 30;
             case SPEED_60X -> 60;
