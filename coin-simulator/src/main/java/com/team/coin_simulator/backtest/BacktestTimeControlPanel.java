@@ -135,11 +135,11 @@ public class BacktestTimeControlPanel extends JPanel
             speedPanel.add(btn);
         }
 
-        btnPause = new JButton("⏸ 일시정지");
+        btnPause = new JButton("일시정지");
         styleBtn(btnPause, new Color(149, 165, 166), Color.WHITE);
         btnPause.addActionListener(e -> togglePause());
 
-        JButton btnRealtime = new JButton("🔴 실시간 복귀");
+        JButton btnRealtime = new JButton("실시간 복귀");
         styleBtn(btnRealtime, new Color(231, 76, 60), Color.WHITE);
         btnRealtime.addActionListener(e -> returnToRealtime());
 
