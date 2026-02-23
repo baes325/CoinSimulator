@@ -4,6 +4,7 @@ import DAO.*;
 import DTO.*;
 import com.team.coin_simulator.CoinConfig; // 코인 한글명 가져오기
 import com.team.coin_simulator.Market_Panel.*;
+import com.team.coin_simulator.DBConnection;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -49,10 +50,7 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
     	this.userId = userId;
     	
         // 1. 초기 데이터 및 배경 설정
-        mockBalance.put("KRW", new BigDecimal("100000000")); // 테스트용 1억 세팅
-        mockBalance.put("BTC", new BigDecimal("0.5"));
-        mockLocked.put("KRW", BigDecimal.ZERO);
-        mockLocked.put("BTC", BigDecimal.ZERO);
+    	loadUserData();
 
         setLayout(new BorderLayout());
         setBackground(Color.WHITE);
@@ -278,24 +276,53 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
     //WebSocket에서 호출: 실시간 가격이 들어올 때 (인터페이스 구현)
     @Override
     public void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr) {
-        String cleanPrice = priceStr.replace(",", "").replace(" KRW", "").trim();
+    	String cleanPrice = priceStr.replace(",", "").replace(" KRW", "").trim();
         if (cleanPrice.isEmpty() || cleanPrice.equals("연결중...")) return;
 
-BigDecimal priceBD = new BigDecimal(cleanPrice);
+        BigDecimal currentPrice = new BigDecimal(cleanPrice);
         
-        //화면 갱신과 상관없이, 일단 들어오는 모든 코인 가격을 갱신
-        latestPrices.put(symbol, priceBD);
+        // 1. 모든 코인의 최신 가격을 메모리에 기록
+        latestPrices.put(symbol, currentPrice);
 
-        // 지금 보고 있는 코인이 아니면 화면 업데이트 로직은 무시
+        // 2.체결 엔진 작동 (화면과 상관없이 모든 코인 감시)
+        new Thread(() -> {
+            // DB에서 해당 코인의 대기 주문을 찾아 현재가와 비교하여 체결 처리
+            List<OrderDTO> executedList = orderDAO.checkAndExecuteLimitOrders(symbol, currentPrice);
+            
+            // 체결된 주문이 있다면 알림 띄우기
+            if (executedList != null && !executedList.isEmpty()) {
+                for (OrderDTO order : executedList) {
+                    // 내 메모리 리스트에서도 삭제 (중요!)
+                	openOrders.removeIf(o -> String.valueOf(o.getOrderId()).equals(String.valueOf(order.getOrderId())));
+                	orderCoinMap.remove(order.getOrderId());
+
+                    String typeStr = order.getSide().equals("BID") ? "매수" : "매도";
+                    String msg = String.format("[지정가 체결] %s %s 완료!\n(가격: %,.0f KRW, 수량: %s)", 
+                            symbol, typeStr, order.getOriginalPrice(), order.getOriginalVolume().toPlainString());
+                    
+                    // UI 업데이트는 메인 쓰레드에서 실행
+                    SwingUtilities.invokeLater(() -> {
+                        JFrame parentFrame = (JFrame) SwingUtilities.getWindowAncestor(OrderPanel.this);
+                        if(parentFrame != null) {
+                            com.team.coin_simulator.Alerts.NotificationUtil.showToast(parentFrame, msg);
+                        }
+                        loadUserData();
+                        refreshEditList(); 
+                        updateInfoLabel();
+                    });
+                }
+            }
+        }).start();
+
+        // 3. 화면 업데이트 (현재 선택된 코인일 경우에만)
         if (!this.selectedCoinCode.equals(symbol)) return;
 
-        this.currentSelectedPrice = priceBD;
+        this.currentSelectedPrice = currentPrice;
         String krName = com.team.coin_simulator.CoinConfig.COIN_INFO.getOrDefault(symbol, symbol);
         
         SwingUtilities.invokeLater(() -> {
             lblSelectedCoinInfo.setText(krName + " - 현재가 " + String.format("%,.0f", currentSelectedPrice) + " KRW");
             
-            // 지정가 모드이고 입력창이 비어있을 때만
             if (isLimitMode && priceField.getText().isEmpty()) {
                 priceField.setText(cleanPrice);
                 updateOrderSummary();
@@ -425,7 +452,7 @@ BigDecimal priceBD = new BigDecimal(cleanPrice);
             order.setRemainingVolume(qty);
             order.setStatus("WAIT");
 
-            boolean isSuccess = orderDAO.insertOrder(order, "user_01"); 
+            boolean isSuccess = orderDAO.insertOrder(order, this.userId); 
 
             if (!isSuccess) {
                 throw new RuntimeException("데이터베이스 저장에 실패했습니다.");
@@ -470,7 +497,7 @@ BigDecimal priceBD = new BigDecimal(cleanPrice);
                 marketOrder.setStatus("DONE");
 
                 boolean isSuccess = orderDAO.executeMarketOrder(
-                    marketOrder, "this.userId", currentSelectedPrice, buyQty, inputVal
+                    marketOrder, this.userId, currentSelectedPrice, buyQty, inputVal
                 );
 
                 if (isSuccess) {
@@ -502,7 +529,7 @@ BigDecimal priceBD = new BigDecimal(cleanPrice);
                 marketOrder.setStatus("DONE");
 
                 boolean isSuccess = orderDAO.executeMarketOrder(
-                    marketOrder, "this.userId", currentSelectedPrice, inputVal, sellTotalKRW
+                    marketOrder, this.userId, currentSelectedPrice, inputVal, sellTotalKRW
                 );
 
                 if (isSuccess) {
@@ -731,5 +758,64 @@ String orderCoin = orderCoinMap.getOrDefault(order.getOrderId(), selectedCoinCod
     private void styleField(JTextField tf) {
         tf.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
         tf.setHorizontalAlignment(JTextField.RIGHT);
+    }
+    
+    private void loadUserData() {
+    	mockBalance.clear();
+        mockLocked.clear();
+        openOrders.clear();
+        orderCoinMap.clear();
+
+        try (java.sql.Connection conn = DBConnection.getConnection()) {
+            
+            // [1] 내 자산(assets) 불러오기
+            String assetSql = "SELECT currency, balance, locked FROM assets WHERE user_id = ?";
+            try (java.sql.PreparedStatement pstmt = conn.prepareStatement(assetSql)) {
+                pstmt.setString(1, this.userId);
+                try (java.sql.ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        String curr = rs.getString("currency");
+                        mockBalance.put(curr, rs.getBigDecimal("balance"));
+                        mockLocked.put(curr, rs.getBigDecimal("locked"));
+                    }
+                }
+            }
+            
+            // 기본값 0 세팅 (오류 방지)
+            mockBalance.putIfAbsent("KRW", BigDecimal.ZERO);
+            mockLocked.putIfAbsent("KRW", BigDecimal.ZERO);
+
+            // [2] 대기 중인 미체결 주문(orders) 불러오기
+            String orderSql = "SELECT * FROM orders WHERE user_id = ? AND status = 'WAIT'";
+            try (java.sql.PreparedStatement pstmt = conn.prepareStatement(orderSql)) {
+                pstmt.setString(1, this.userId);
+                try (java.sql.ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        OrderDTO order = new OrderDTO();
+                        order.setOrderId(rs.getLong("order_id"));
+                        order.setSide(rs.getString("side"));
+                        order.setOriginalPrice(rs.getBigDecimal("original_price"));
+                        order.setOriginalVolume(rs.getBigDecimal("original_volume"));
+                        order.setRemainingVolume(rs.getBigDecimal("remaining_volume"));
+                        order.setStatus(rs.getString("status"));
+                        
+                        String market = rs.getString("market"); 
+                        String coinCode = market.replace("KRW-", ""); // "BTC" 추출
+                        
+                        openOrders.add(order);
+                        orderCoinMap.put(order.getOrderId(), coinCode);
+                    }
+                }
+            }
+            
+            // 데이터 갱신 후 화면 업데이트
+            SwingUtilities.invokeLater(() -> {
+                updateInfoLabel();
+                refreshEditList();
+            });
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }
