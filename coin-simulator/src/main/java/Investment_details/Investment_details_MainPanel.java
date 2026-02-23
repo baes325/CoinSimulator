@@ -40,6 +40,7 @@ public class Investment_details_MainPanel extends JPanel {
     private ProfitLoss_MainPanel profitLossPanel;
     private History_MainPanel historyPanel;
     private OpenOrder_MainPanel openOrderPanel;
+    private final long sessionId; 
     
     private final String userId;
     
@@ -49,8 +50,9 @@ public class Investment_details_MainPanel extends JPanel {
     private static final String CARD_HISTORY = "HISTORY";
     private static final String CARD_OPEN_ORDER = "OPEN_ORDER";
     
-    public Investment_details_MainPanel(String userId) {
+    public Investment_details_MainPanel(String userId, long sessionId) {
         this.userId = userId;
+        this.sessionId = sessionId; // [추가] 받아온 세션 ID 저장
         
         setLayout(new BorderLayout());
         setBackground(Color.WHITE);
@@ -64,7 +66,16 @@ public class Investment_details_MainPanel extends JPanel {
         contentPanel.setBackground(Color.WHITE);
         
         // 3. 각 탭 패널 생성 및 추가
-        assetPanel = new Asset_MainPanel(userId);
+        // [수정] Asset_MainPanel 생성 시 sessionId를 함께 전달
+        assetPanel = new Asset_MainPanel(userId, sessionId);
+        
+        // ※ 주의: 향후 투자손익, 거래내역, 미체결 패널도 세션별로 격리해야 한다면
+        // 해당 클래스들을 Asset_MainPanel처럼 수정한 뒤, 여기서도 sessionId를 넘겨주어야 합니다.
+        // profitLossPanel = new ProfitLoss_MainPanel(userId, sessionId);
+        // historyPanel = new History_MainPanel(userId, sessionId);
+        // openOrderPanel = new OpenOrder_MainPanel(userId, sessionId);
+        
+        // 현재는 기존 코드 유지 (해당 패널들도 수정했다면 위 주석처럼 변경)
         profitLossPanel = new ProfitLoss_MainPanel(userId);
         historyPanel = new History_MainPanel(userId);
         openOrderPanel = new OpenOrder_MainPanel(userId);
@@ -134,7 +145,9 @@ public class Investment_details_MainPanel extends JPanel {
             frame.setSize(1200, 800);
             frame.setLocationRelativeTo(null);
             
-            Investment_details_MainPanel panel = new Investment_details_MainPanel("user_01");
+            // [수정] 테스트를 위해 임의의 sessionId(예: 1L) 전달
+            long dummySessionId = 1L; 
+            Investment_details_MainPanel panel = new Investment_details_MainPanel("user_01", dummySessionId);
             frame.add(panel);
             frame.setVisible(true);
             

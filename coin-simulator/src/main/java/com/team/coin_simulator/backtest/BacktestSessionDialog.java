@@ -8,6 +8,7 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -28,10 +29,11 @@ import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.border.EmptyBorder;
-import javax.swing.table.DefaultTableModel;
-import javax.swing.event.DocumentListener;
 import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.table.DefaultTableModel;
 
+import DAO.AssetDAO;
 import DTO.SessionDTO;
 
 /**
@@ -289,6 +291,13 @@ public class BacktestSessionDialog extends JDialog {
         Long newSessionId = dao.createSession(userId, name, startTime, seed);
         if (newSessionId == null) {
             showWarn("세션 생성 중 오류가 발생했습니다."); return;
+        }
+        
+        //초기 자본금(KRW)을 assets 테이블에 등록
+        boolean isAssetCreated = AssetDAO.createInitialAsset(userId, newSessionId, BigDecimal.valueOf(seed));
+        if (!isAssetCreated) {
+            showWarn("초기 자본금 등록 중 오류가 발생했습니다.");
+            return;
         }
 
         // 생성 성공 → 바로 해당 세션을 selectedSession 으로 설정하고 닫기

@@ -76,6 +76,8 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
     private BacktestTimeControlPanel backtestControlPanel;
     private CandleChartBacktestAdapter chartBacktestAdapter;
     
+    private long currentSessionId = 0L;
+    
     public MainFrame(String userId) {
         super("가상화폐 모의투자 시스템");
         this.currentUserId = userId;
@@ -142,10 +144,12 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
         tradingPanel = createTradingPanel();
         
         // 2-2. 투자내역 화면 생성
-        investmentPanel = new Investment_details_MainPanel(currentUserId);
+        // [수정] currentSessionId를 함께 전달하도록 변경
+        investmentPanel = new Investment_details_MainPanel(currentUserId, currentSessionId);
         
         chartBacktestAdapter = new CandleChartBacktestAdapter(chartPanel, historyPanel);
         BacktestTimeController.getInstance().addTickListener(chartBacktestAdapter);
+        
         // 카드에 추가
         mainContentPanel.add(tradingPanel, CARD_TRADING);
         mainContentPanel.add(investmentPanel, CARD_INVESTMENT);
