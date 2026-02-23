@@ -70,4 +70,41 @@ public class OrderCalc {
         // 살 수 있는 수량 = 내가 낸 돈 / 1 코인당 구매 비용 (소수점 8자리 내림)
         return totalAmountKRW.divide(costPerUnit, SCALE_BTC, RoundingMode.DOWN);
     }
+    
+ //[퍼센트 계산]
+    // 지정가 매수 시: 내 원화(KRW)의 %로 살 수 있는 '코인 수량' 계산
+    public static BigDecimal calcPercentLimitBuyQty(BigDecimal availKrw, double percent, BigDecimal limitPrice) {
+        if (limitPrice == null || limitPrice.compareTo(BigDecimal.ZERO) == 0) return BigDecimal.ZERO;
+        BigDecimal targetKrw = availKrw.multiply(BigDecimal.valueOf(percent));
+        // 수량 = 투자할 돈 / 1코인 가격 (소수점 8자리 버림)
+        return targetKrw.divide(limitPrice, 8, BigDecimal.ROUND_DOWN).stripTrailingZeros();
+    }
+
+    //매도 시 (지정가/시장가 공통): 내 코인 잔고의 %에 해당하는 '코인 수량' 계산
+    public static BigDecimal calcPercentSellQty(BigDecimal availCoin, double percent) {
+        return availCoin.multiply(BigDecimal.valueOf(percent)).setScale(8, BigDecimal.ROUND_DOWN).stripTrailingZeros();
+    }
+
+    //시장가 매수 시: 내 원화(KRW)의 %에 해당하는 '투자 금액(KRW)' 계산
+    public static BigDecimal calcPercentMarketBuyAmount(BigDecimal availKrw, double percent) {
+        // 원화는 소수점이 없으므로 0자리에서 버림
+        return availKrw.multiply(BigDecimal.valueOf(percent)).setScale(0, BigDecimal.ROUND_DOWN);
+    }
+    
+ // 호가 단위(Tick Size) 계산 로직
+    /**
+     * 현재 가격에 맞춰 업비트 기준의 호가 단위를 반환
+     */
+    public static BigDecimal getTickSize(BigDecimal price) {
+        double p = price.doubleValue();
+        if (p >= 2000000) return new BigDecimal("1000"); // 200만 원 이상은 1,000원 단위
+        if (p >= 1000000) return new BigDecimal("500");  // 100만 원 이상은 500원 단위
+        if (p >= 500000) return new BigDecimal("100");   // 50만 원 이상은 100원 단위
+        if (p >= 100000) return new BigDecimal("50");    // 10만 원 이상은 50원 단위
+        if (p >= 10000) return new BigDecimal("10");     // 1만 원 이상은 10원 단위
+        if (p >= 1000) return new BigDecimal("1");       // 1천 원 이상은 1원 단위
+        if (p >= 100) return new BigDecimal("0.1");      // 100원 이상은 0.1원 단위
+        if (p >= 10) return new BigDecimal("0.01");      // 10원 이상은 0.01원 단위
+        return new BigDecimal("0.001");                  // 아주 싼 동전 코인들
+    }
 }

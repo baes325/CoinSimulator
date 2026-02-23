@@ -104,6 +104,7 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         tradeInputPanel.add(createLimitForm(), "LIMIT");
         tradeInputPanel.add(createMarketForm(), "MARKET");
         tradePanel.add(tradeInputPanel);
+        
         tradePanel.add(Box.createVerticalGlue());
 
         // 하단 정보 및 버튼
@@ -312,27 +313,118 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         } catch (Exception e) { JOptionPane.showMessageDialog(this, "주문 실패: " + e.getMessage(), "에러", JOptionPane.ERROR_MESSAGE); }
     }
 
-    private JPanel createLimitForm() {
-        JPanel p = new JPanel(); p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS)); p.setBackground(Color.WHITE);
-        p.add(new JLabel("주문가격 (KRW)"));
-        priceField = new JTextField(); styleField(priceField); p.add(priceField);
-        p.add(Box.createVerticalStrut(10));
-        p.add(new JLabel("주문수량"));
-        qtyField = new JTextField(); styleField(qtyField); p.add(qtyField);
+ //퍼센트 버튼 패널
+    private JPanel createPercentPanel() {
+        JPanel p = new JPanel(new GridLayout(1, 5, 5, 0)); 
+        p.setBackground(Color.WHITE);
+        p.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
+        p.setAlignmentX(Component.LEFT_ALIGNMENT); // [추가] 왼쪽 정렬 고정 (안 밀려나게)
+
+        String[] labels = {"10%", "25%", "50%", "100%", "직접"};
+        double[] fractions = {0.10, 0.25, 0.50, 1.00, 0.0};
+
+        for (int i = 0; i < labels.length; i++) {
+            JButton btn = new JButton(labels[i]);
+            btn.setBackground(new Color(245, 245, 245));
+            btn.setFont(new Font("맑은 고딕", Font.PLAIN, 12));
+            btn.setMargin(new Insets(2, 0, 2, 0));
+            btn.setFocusPainted(false);
+            
+            final double frac = fractions[i];
+            btn.addActionListener(e -> applyPercent(frac));
+            p.add(btn);
+        }
         return p;
     }
 
-    private JPanel createMarketForm() {
-        JPanel p = new JPanel(); p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS)); p.setBackground(Color.WHITE);
-        lblMarketUnit = new JLabel("주문총액 (KRW)"); p.add(lblMarketUnit);
-        marketAmountField = new JTextField(); styleField(marketAmountField); p.add(marketAmountField);
+    //지정가 폼
+    private JPanel createLimitForm() {
+        JPanel p = new JPanel(); 
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS)); 
+        p.setBackground(Color.WHITE);
+        
+        JLabel lblPrice = new JLabel("주문가격 (KRW)"); 
+        lblPrice.setAlignmentX(Component.LEFT_ALIGNMENT); 
+        p.add(lblPrice);
+        
+        //가격 입력칸 오른쪽에 [+] [-] 버튼 팩 추가
+        JPanel priceRow = new JPanel(new BorderLayout()); 
+        priceRow.setBackground(Color.WHITE);
+        priceRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+        
+        priceField = new JTextField(); styleField(priceField);
+        priceRow.add(priceField, BorderLayout.CENTER);
+        
+        //버튼 팩
+        JPanel btnPanel = new JPanel(new GridLayout(1, 2, 0, 0));
+        JButton btnMinus = new JButton("-");
+        JButton btnPlus = new JButton("+");
+        
+        Font mathFont = new Font("맑은 고딕", Font.BOLD, 16);
+        btnMinus.setFont(mathFont); btnMinus.setBackground(new Color(240, 240, 240)); btnMinus.setFocusPainted(false);
+        btnPlus.setFont(mathFont); btnPlus.setBackground(new Color(240, 240, 240)); btnPlus.setFocusPainted(false);
+        
+        //adjustPrice 메서드 연결 (true면 더하기, false면 빼기)
+        btnMinus.addActionListener(e -> adjustPrice(false));
+        btnPlus.addActionListener(e -> adjustPrice(true));
+        
+        btnPanel.add(btnMinus);
+        btnPanel.add(btnPlus);
+        
+        priceRow.add(btnPanel, BorderLayout.EAST);
+        
+        p.add(priceRow); 
         p.add(Box.createVerticalStrut(10));
-        valExpected = new JLabel("예상 수량: -"); valExpected.setForeground(Color.GRAY); p.add(valExpected);
+        
+        JLabel lblQty = new JLabel("주문수량"); 
+        lblQty.setAlignmentX(Component.LEFT_ALIGNMENT); 
+        p.add(lblQty);
+        
+        JPanel qtyRow = new JPanel(new BorderLayout()); 
+        qtyRow.setBackground(Color.WHITE);
+        qtyRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+        qtyField = new JTextField(); styleField(qtyField); 
+        qtyRow.add(qtyField, BorderLayout.CENTER);
+        p.add(qtyRow);
+        
+        p.add(Box.createVerticalStrut(5));
+        p.add(createPercentPanel()); 
+        
+        return p;
+    }
+
+    //시장가 폼
+    private JPanel createMarketForm() {
+        JPanel p = new JPanel(); 
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS)); 
+        p.setBackground(Color.WHITE);
+        
+        lblMarketUnit = new JLabel("주문총액 (KRW)"); 
+        lblMarketUnit.setAlignmentX(Component.LEFT_ALIGNMENT); 
+        p.add(lblMarketUnit);
+        
+        JPanel marketRow = new JPanel(new BorderLayout()); 
+        marketRow.setBackground(Color.WHITE);
+        marketRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+        marketAmountField = new JTextField(); styleField(marketAmountField); 
+        marketRow.add(marketAmountField, BorderLayout.CENTER);
+        p.add(marketRow);
+        
+        p.add(Box.createVerticalStrut(5));
+        p.add(createPercentPanel()); //시장가용 버튼
+        
+        p.add(Box.createVerticalStrut(10));
+        valExpected = new JLabel("예상 수량: -"); 
+        valExpected.setForeground(Color.GRAY); 
+        valExpected.setAlignmentX(Component.LEFT_ALIGNMENT);
+        p.add(valExpected);
+        
         marketAmountField.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) { updateMarketCalculation(); }
             public void removeUpdate(DocumentEvent e) { updateMarketCalculation(); }
             public void changedUpdate(DocumentEvent e) { updateMarketCalculation(); }
         });
+        
         return p;
     }
 
@@ -360,5 +452,90 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
                 orderEditListPanel.updateData(openOrders, orderCoinMap, mockBalance, mockLocked);
             }
         });
+    }
+
+    //퍼센트에 맞춰 내 지갑 돈을 계산해주는 로직
+    private void applyPercent(double fraction) {
+        // "직접입력" 버튼 (비우기)
+        if (fraction == 0.0) { 
+            if (isLimitMode) qtyField.setText("");
+            else marketAmountField.setText("");
+            updateOrderSummary();
+            return;
+        }
+
+        try {
+            if (isLimitMode) { // [지정가 모드]
+                if (sideIdx == 0) { // 매수 (KRW 기준 -> 수량 계산)
+                    BigDecimal availKrw = mockBalance.getOrDefault("KRW", BigDecimal.ZERO);
+                    
+                    String pStr = priceField.getText().replace(",", "").trim();
+                    if (pStr.isEmpty()) { 
+                        if (currentSelectedPrice.compareTo(BigDecimal.ZERO) > 0) {
+                            pStr = currentSelectedPrice.toPlainString();
+                            priceField.setText(pStr);
+                        } else return;
+                    }
+                    BigDecimal price = new BigDecimal(pStr);
+                    BigDecimal qty = OrderCalc.calcPercentLimitBuyQty(availKrw, fraction, price);
+                    qtyField.setText(qty.compareTo(BigDecimal.ZERO) == 0 ? "" : qty.toPlainString());
+                    
+                } else { // 매도 (코인 기준 -> 수량 계산)
+                    BigDecimal availCoin = mockBalance.getOrDefault(selectedCoinCode, BigDecimal.ZERO);
+                    BigDecimal qty = OrderCalc.calcPercentSellQty(availCoin, fraction);
+                    qtyField.setText(qty.compareTo(BigDecimal.ZERO) == 0 ? "" : qty.toPlainString());
+                }
+            } else { // [시장가 모드]
+                if (sideIdx == 0) { // 매수 (KRW 기준 -> 총액 계산)
+                    BigDecimal availKrw = mockBalance.getOrDefault("KRW", BigDecimal.ZERO);
+                    BigDecimal amt = OrderCalc.calcPercentMarketBuyAmount(availKrw, fraction);
+                    marketAmountField.setText(amt.compareTo(BigDecimal.ZERO) == 0 ? "" : amt.toPlainString());
+                    
+                } else { // 매도 (코인 기준 -> 수량 계산)
+                    BigDecimal availCoin = mockBalance.getOrDefault(selectedCoinCode, BigDecimal.ZERO);
+                    BigDecimal qty = OrderCalc.calcPercentSellQty(availCoin, fraction);
+                    marketAmountField.setText(qty.compareTo(BigDecimal.ZERO) == 0 ? "" : qty.toPlainString());
+                }
+            }
+            updateOrderSummary(); 
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+    
+ //가격 [+] [-] 버튼
+    private void adjustPrice(boolean isPlus) {
+        try {
+            String pStr = priceField.getText().replace(",", "").trim();
+            BigDecimal currentVal;
+            
+            // 1. 입력창이 비어있으면 현재 시세를 기준으로 시작
+            if (pStr.isEmpty()) {
+                if (currentSelectedPrice.compareTo(BigDecimal.ZERO) <= 0) return;
+                currentVal = currentSelectedPrice;
+            } else {
+                currentVal = new BigDecimal(pStr);
+            }
+
+            // 2. OrderCalc에서 이 가격에 맞는 '호가 단위'를 가져옴
+            BigDecimal tickSize = OrderCalc.getTickSize(currentVal);
+            
+            // 3. 더하거나 빼기
+            if (isPlus) {
+                currentVal = currentVal.add(tickSize);
+            } else {
+                currentVal = currentVal.subtract(tickSize);
+                if (currentVal.compareTo(BigDecimal.ZERO) <= 0) {
+                    currentVal = tickSize; // 마이너스 가격 방지 (최소 1호가 유지)
+                }
+            }
+            
+            // 4. 소수점 깔끔하게 처리해서 다시 화면에 꽂아주기
+            priceField.setText(currentVal.stripTrailingZeros().toPlainString());
+            updateOrderSummary(); // 총액도 새로고침
+            
+        } catch (Exception ex) {
+            // 사용자가 숫자가 아닌 이상한 글자를 쳤을 때는 무시
+        }
     }
 }
