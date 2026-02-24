@@ -8,7 +8,6 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
-import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 
@@ -36,42 +35,11 @@ import DAO.UserDAO;
 import DTO.SessionDTO;
 import DTO.UserDTO;
 
-import java.awt.datatransfer.StringSelection;
-import java.awt.Toolkit;
-
-
 public class LoginFrame extends JFrame {
 
     private final Font fontBold = new Font("맑은 고딕", Font.BOLD, 14);
     private final Font fontPlain = new Font("맑은 고딕", Font.PLAIN, 12);
     private final Font fontSmall = new Font("맑은 고딕", Font.PLAIN, 11);
-
-    private void showTempPasswordDialog(String tempPw) {
-        JTextField pwField = new JTextField(tempPw);
-        pwField.setEditable(false);
-        pwField.setFont(new Font("맑은 고딕", Font.BOLD, 14));
-
-        JButton copyBtn = new JButton("복사");
-        copyBtn.addActionListener(ev -> {
-            Toolkit.getDefaultToolkit().getSystemClipboard()
-                    .setContents(new StringSelection(tempPw), null);
-            JOptionPane.showMessageDialog(this, "클립보드에 복사되었습니다!");
-        });
-
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.add(new JLabel("임시 비밀번호가 재설정되었습니다."));
-        panel.add(Box.createVerticalStrut(8));
-        panel.add(new JLabel("임시 비밀번호 (복사 가능):"));
-        panel.add(Box.createVerticalStrut(6));
-        panel.add(pwField);
-        panel.add(Box.createVerticalStrut(10));
-        panel.add(copyBtn);
-        panel.add(Box.createVerticalStrut(8));
-        panel.add(new JLabel("※ 로그인 후 [비밀번호 변경]에서 새 비밀번호로 바꾸세요."));
-
-        JOptionPane.showMessageDialog(this, panel, "비밀번호 재설정 완료", JOptionPane.INFORMATION_MESSAGE);
-    }
 
     public LoginFrame() {
         setTitle("ONBIT 로그인");
@@ -118,9 +86,7 @@ public class LoginFrame extends JFrame {
 
         JButton loginBtn = new JButton("로그인");
         stylePrimaryBtn(loginBtn);
-
-        // 로그인 액션 (버튼 + Enter 공통)
-        ActionListener loginAction = e -> {
+        loginBtn.addActionListener(e -> {
             String userId = idField.getText().trim();
             String password = new String(pwField.getPassword());
 
@@ -132,23 +98,27 @@ public class LoginFrame extends JFrame {
             UserDTO user = UserDAO.loginCheck(userId, password);
             if (user != null) {
                 JOptionPane.showMessageDialog(this, user.getNickname() + "님, 환영합니다!");
-                SwingUtilities.invokeLater(() -> new MainFrame(user.getUserId().trim()));
-                dispose();
-            } else {
-                JOptionPane.showMessageDialog(this,
-                        "아이디 또는 비밀번호가 일치하지 않습니다.",
-                        "로그인 실패",
-                        JOptionPane.ERROR_MESSAGE);
+                
+                // [핵심 변경] MainFrame을 띄우기 전에 실시간 세션을 조회 및 세팅합니다.
+                try {
+                    BacktestSessionDAO sessionDAO = new BacktestSessionDAO();
+                    SessionDTO realtimeSession = sessionDAO.getOrCreateRealtimeSession(user.getUserId());
+                    SessionManager.getInstance().setCurrentSession(realtimeSession);
+                } catch (Exception ex) {
+                    System.err.println("[LoginFrame] 세션 초기화 중 오류 발생: " + ex.getMessage());
+                    ex.printStackTrace();
+                }
+
+                new MainFrame(user.getUserId());   // 🔥 메인화면 실행
+                this.dispose();    // 로그인창 닫기
             }
-        };
-
-        loginBtn.addActionListener(loginAction);
-        idField.addActionListener(loginAction);
-        pwField.addActionListener(loginAction);
-
+            else {
+                JOptionPane.showMessageDialog(this, "아이디 또는 비밀번호가 일치하지 않습니다.", "로그인 실패", JOptionPane.ERROR_MESSAGE);
+            }
+        });
         card.add(loginBtn);
 
-        // 아이디/비밀번호 찾기 링크
+        // 아이디/비밀번호 찾기
         card.add(Box.createVerticalStrut(25));
         JPanel linkPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 0));
         linkPanel.setOpaque(false);
@@ -158,90 +128,70 @@ public class LoginFrame extends JFrame {
         setupLink(findIdLabel);
         setupLink(findPwLabel);
 
-        // ===============================
-        // 아이디 찾기: phone -> user_id 조회 후 "스타일B(앞5글자만)" 마스킹 출력
-        // ===============================
+        // 아이디 찾기
         findIdLabel.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 String phone = JOptionPane.showInputDialog(LoginFrame.this,
-                        "가입 시 등록한 휴대폰 번호를 입력해주세요.\n(숫자만 입력 권장)",
-                        "아이디 찾기",
-                        JOptionPane.QUESTION_MESSAGE);
+                        "가입 시 등록한 휴대폰 번호를 입력해주세요.", "아이디 찾기", JOptionPane.QUESTION_MESSAGE);
                 if (phone == null) return;
 
                 phone = phone.trim().replaceAll("[^0-9]", "");
                 if (phone.isEmpty()) return;
 
                 String foundId = UserDAO.findIdByPhone(phone);
-                if (foundId == null) {
+                if (foundId != null) {
                     JOptionPane.showMessageDialog(LoginFrame.this,
-                            "해당 번호로 가입된 정보가 없습니다.",
-                            "찾기 실패",
-                            JOptionPane.ERROR_MESSAGE);
-                    return;
+                            "찾으시는 아이디는 [" + foundId + "] 입니다.", "아이디 찾기 성공", JOptionPane.INFORMATION_MESSAGE);
+                } else {
+                    JOptionPane.showMessageDialog(LoginFrame.this,
+                            "해당 번호로 가입된 정보가 없습니다.", "찾기 실패", JOptionPane.ERROR_MESSAGE);
                 }
-
-                String masked = maskIdStyleB(foundId);
-                JOptionPane.showMessageDialog(LoginFrame.this,
-                        "찾으시는 아이디는 [" + masked + "] 입니다.",
-                        "아이디 찾기 성공",
-                        JOptionPane.INFORMATION_MESSAGE);
             }
         });
 
-        // ===============================
-        // 비밀번호 찾기: 메일 X
-        // 아이디+휴대폰번호 일치하면 임시 비번으로 즉시 재설정 후, 화면에는 마스킹해서 보여주기
-        // ===============================
+        // 비밀번호 찾기
         findPwLabel.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
+                String input = JOptionPane.showInputDialog(LoginFrame.this, "가입하신 이메일 주소를 입력해주세요.");
+                if (input == null) return;
 
-                String inputId = JOptionPane.showInputDialog(LoginFrame.this,
-                        "아이디(이메일)를 입력해주세요.",
-                        "비밀번호 찾기",
-                        JOptionPane.QUESTION_MESSAGE);
-                if (inputId == null) return;
+                final String email = input.trim();   // ✅ final 로 고정
+                if (email.isEmpty()) return;
 
-                String userId = inputId.trim();
-                if (userId.isEmpty()) return;
+                if (UserDAO.isIdDuplicate(email)) {
+                    final String tempPw = "ONBIT" + (int)(Math.random() * 89999 + 10000);
 
-                String inputPhone = JOptionPane.showInputDialog(LoginFrame.this,
-                        "가입 시 등록한 휴대폰 번호를 입력해주세요.\n(숫자만 입력 권장)",
-                        "비밀번호 찾기",
-                        JOptionPane.QUESTION_MESSAGE);
-                if (inputPhone == null) return;
+                    new Thread(() -> {
+                        try {
+                            // (안전하게) 메일 먼저 보내고 성공하면 DB 업데이트
+                            EmailManager.sendMail(
+                                    email,
+                                    "[ONBIT] 임시 비밀번호 안내",
+                                    "요청하신 임시 비밀번호는 " + tempPw + " 입니다."
+                            );
 
-                String phone = inputPhone.trim().replaceAll("[^0-9]", "");
-                if (phone.isEmpty()) return;
+                            UserDAO.updatePassword(email, tempPw);
 
-                // 1) 아이디+전화번호 일치 확인
-                if (!UserDAO.verifyUserByIdAndPhone(userId, phone)) {
-                    JOptionPane.showMessageDialog(LoginFrame.this,
-                            "등록되지 않았거나 정보가 일치하지 않습니다.",
-                            "비밀번호 찾기 실패",
-                            JOptionPane.ERROR_MESSAGE);
-                    return;
+                            SwingUtilities.invokeLater(() ->
+                                    JOptionPane.showMessageDialog(LoginFrame.this, "임시 비밀번호가 메일로 발송되었습니다."));
+                        } catch (Exception ex) {
+                            ex.printStackTrace();
+                            SwingUtilities.invokeLater(() ->
+                                    JOptionPane.showMessageDialog(LoginFrame.this,
+                                            "메일 발송에 실패했습니다. 설정 및 앱 비밀번호를 확인하세요.",
+                                            "메일 오류", JOptionPane.ERROR_MESSAGE));
+                        }
+                    }).start();
+
+                } else {
+                    JOptionPane.showMessageDialog(LoginFrame.this, "등록되지 않은 사용자 정보입니다.");
                 }
-
-                // 2) 임시 비밀번호 생성
-                String tempPw = UserDAO.generateTempPassword(10);
-
-                // 3) DB 비밀번호를 임시 비밀번호로 재설정
-                boolean ok = UserDAO.updatePassword(userId, tempPw);
-                if (!ok) {
-                    JOptionPane.showMessageDialog(LoginFrame.this,
-                            "임시 비밀번호 발급(재설정)에 실패했습니다.",
-                            "오류",
-                            JOptionPane.ERROR_MESSAGE);
-                    return;
-                }
-
-                // 4) 팝업: 임시 비밀번호 표시 + 복사 버튼
-                showTempPasswordDialog(tempPw);
             }
         });
+
+
         linkPanel.add(findIdLabel);
         JLabel separator = new JLabel("|");
         separator.setForeground(Color.LIGHT_GRAY);
@@ -267,19 +217,8 @@ public class LoginFrame extends JFrame {
         goToJoinBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
         goToJoinBtn.setMargin(new Insets(0, 0, 0, 0));
         goToJoinBtn.addActionListener(e -> {
-            try {
-                JoinFrame join = new JoinFrame();   // 여기서 예외 나면 아래로 떨어짐
-                join.setVisible(true);              // JoinFrame 생성자에서 setVisible 안 하면 이 줄이 필요
-                dispose();                          // ✅ JoinFrame이 뜬 다음에 닫기
-            } catch (Throwable ex) {
-                ex.printStackTrace();
-                JOptionPane.showMessageDialog(
-                    LoginFrame.this,
-                    "JoinFrame 열기 실패: " + ex.getClass().getSimpleName() + "\n" + ex.getMessage(),
-                    "오류",
-                    JOptionPane.ERROR_MESSAGE
-                );
-            }
+            new JoinFrame();
+            dispose();
         });
 
         joinHintPanel.add(joinLabel);
@@ -290,8 +229,6 @@ public class LoginFrame extends JFrame {
         add(root);
         setVisible(true);
     }
-
-    // ---------------- UI helpers ----------------
 
     private void setupLink(JLabel label) {
         label.setFont(fontSmall);
@@ -317,47 +254,12 @@ public class LoginFrame extends JFrame {
         btn.setForeground(Color.WHITE);
         btn.setFont(fontBold);
         btn.setFocusPainted(false);
-        btn.setBorderPainted(false);	
+        btn.setBorderPainted(false);
         btn.setOpaque(true);
         btn.setAlignmentX(Component.CENTER_ALIGNMENT);
     }
 
-    // ---------------- Masking ----------------
-
-    // 아이디 마스킹 스타일 B: 앞 5글자만 보이고 나머지 *
-    // 이메일이면 @ 앞(local-part)만 마스킹
-    private String maskIdStyleB(String userId) {
-        if (userId == null || userId.isBlank()) return "";
-
-        int at = userId.indexOf('@');
-        if (at > 0) {
-            String local = userId.substring(0, at);
-            String domain = userId.substring(at);
-            return maskLocalStyleB(local) + domain;
-        }
-        return maskLocalStyleB(userId);
-    }
-
-    private String maskLocalStyleB(String s) {
-        int n = s.length();
-        if (n <= 1) return "*";
-        if (n <= 5) return s.charAt(0) + "*".repeat(n - 1);
-        return s.substring(0, 5) + "*".repeat(n - 5);
-    }
-
-    // 비밀번호 마스킹: 앞2 + 뒤2만 보여주고 나머지 *
-    private String maskPassword(String pw) {
-        if (pw == null || pw.isBlank()) return "";
-        int n = pw.length();
-        if (n <= 2) return "*".repeat(n);
-        if (n <= 4) return pw.charAt(0) + "*".repeat(n - 1);
-
-        int prefix = 2, suffix = 2;
-        int stars = Math.max(1, n - (prefix + suffix));
-        return pw.substring(0, prefix) + "*".repeat(stars) + pw.substring(n - suffix);
-    }
-
     public static void main(String[] args) {
-    	SwingUtilities.invokeLater(LoginFrame::new);
+        SwingUtilities.invokeLater(LoginFrame::new);
     }
 }

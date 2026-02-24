@@ -37,8 +37,6 @@ public class ExecutionDTO {
     // 5. 시간
     private Timestamp executedAt;  // executed_at
 
-    private String userId;
-    private double totalPrice;
     // --- 생성자 (Constructors) ---
 
     // 1. 기본 생성자
@@ -153,20 +151,6 @@ public class ExecutionDTO {
 		this.executedAt = executedAt;
 	}
 
-	public String getUserId() {
-	    return userId;
-	}
-	public void setUserId(String userId) {
-	    this.userId = userId;
-	}
-
-	public double getTotalPrice() {
-	    return totalPrice;
-	}
-	public void setTotalPrice(double totalPrice) {
-	    this.totalPrice = totalPrice;
-	}
-	
 	public static long getSerialversionuid() {
 		return serialVersionUID;
 	}
