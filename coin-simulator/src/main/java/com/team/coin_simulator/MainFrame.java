@@ -75,8 +75,10 @@ public class MainFrame extends JFrame {
     // 백테스팅 UI / 어댑터
     private BacktestTimeControlPanel backtestControlPanel;
     private CandleChartBacktestAdapter chartBacktestAdapter;
-
-
+    
+    //profile 버튼 
+    private JButton btnProfile;
+    
     private long currentSessionId = SessionManager.getInstance().getCurrentSessionId();
 
 
@@ -158,16 +160,17 @@ public class MainFrame extends JFrame {
         backtestControlPanel = new BacktestTimeControlPanel(this, currentUserId);
         panel.add(backtestControlPanel, BorderLayout.CENTER);
 
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 10));
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 10));
         buttonPanel.setBackground(Color.WHITE);
 
+        // ✅ 투자내역 보기 버튼 (폭 줄임)
         btnToggleView = new JButton("투자내역 보기");
         btnToggleView.setFont(new Font("맑은 고딕", Font.BOLD, 13));
         btnToggleView.setForeground(Color.WHITE);
         btnToggleView.setBackground(new Color(52, 152, 219));
         btnToggleView.setFocusPainted(false);
         btnToggleView.setBorderPainted(false);
-        btnToggleView.setPreferredSize(new Dimension(150, 35));
+        btnToggleView.setPreferredSize(new Dimension(120, 35)); // 🔥 150 -> 120
         btnToggleView.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
         btnToggleView.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -178,10 +181,29 @@ public class MainFrame extends JFrame {
         btnToggleView.addActionListener(e -> toggleView());
         buttonPanel.add(btnToggleView);
 
+        // ✅ 프로필 버튼 (투자내역 보기 "오른쪽")
+        btnProfile = new JButton("내 프로필");
+        btnProfile.setFont(new Font("맑은 고딕", Font.BOLD, 13));
+        btnProfile.setForeground(Color.WHITE);
+        btnProfile.setBackground(new Color(155, 89, 182));
+        btnProfile.setFocusPainted(false);
+        btnProfile.setBorderPainted(false);
+        btnProfile.setPreferredSize(new Dimension(110, 35));
+        btnProfile.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+
+        btnProfile.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseEntered(java.awt.event.MouseEvent evt) { btnProfile.setBackground(new Color(142, 68, 173)); }
+            public void mouseExited(java.awt.event.MouseEvent evt)  { btnProfile.setBackground(new Color(155, 89, 182)); }
+        });
+
+        btnProfile.addActionListener(e -> openProfile());
+        buttonPanel.add(btnProfile);
+
         panel.add(buttonPanel, BorderLayout.EAST);
         return panel;
     }
 
+    
     /** 거래 화면 생성 */
     private JPanel createTradingPanel() {
         JPanel panel = new JPanel(new BorderLayout());
@@ -326,7 +348,16 @@ public class MainFrame extends JFrame {
     // ════════════════════════════════════════════════
     //  WebSocket / 리소스
     // ════════════════════════════════════════════════
+    
+    //프로필
+    private void openProfile() {
+        // ✅ 여기 한 줄을 너희가 이미 만든 "프로필 버튼 기능" 호출로 바꿔 끼우면 됨
+        // 예: new MyProfileFrame(currentUserId);
+        // 예: new ProfileDialog(this, currentUserId).setVisible(true);
 
+        javax.swing.JOptionPane.showMessageDialog(this, "프로필 기능 연결(openProfile) 필요");
+    }
+    
     private void initWebSocket() {
         UpbitWebSocketDao.getInstance().start();
     }

@@ -1,33 +1,15 @@
 package com.team.coin_simulator.login;
 
-import java.awt.Color;
-import java.awt.Component;
-import java.awt.Cursor;
-import java.awt.Dimension;
-import java.awt.FlowLayout;
-import java.awt.Font;
-import java.awt.GridBagLayout;
-import java.awt.Insets;
+import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 
-import javax.swing.BorderFactory;
-import javax.swing.Box;
-import javax.swing.BoxLayout;
-import javax.swing.JButton;
-import javax.swing.JFrame;
-import javax.swing.JLabel;
-import javax.swing.JOptionPane;
-import javax.swing.JPanel;
-import javax.swing.JPasswordField;
-import javax.swing.JTextField;
-import javax.swing.SwingUtilities;
+import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.LineBorder;
 import javax.swing.border.TitledBorder;
 
 import com.team.coin_simulator.MainFrame;
-// 세션 관리를 위한 import 추가
 import com.team.coin_simulator.backtest.BacktestSessionDAO;
 import com.team.coin_simulator.backtest.SessionManager;
 
@@ -86,6 +68,7 @@ public class LoginFrame extends JFrame {
 
         JButton loginBtn = new JButton("로그인");
         stylePrimaryBtn(loginBtn);
+
         loginBtn.addActionListener(e -> {
             String userId = idField.getText().trim();
             String password = new String(pwField.getPassword());
@@ -98,8 +81,7 @@ public class LoginFrame extends JFrame {
             UserDTO user = UserDAO.loginCheck(userId, password);
             if (user != null) {
                 JOptionPane.showMessageDialog(this, user.getNickname() + "님, 환영합니다!");
-                
-                // [핵심 변경] MainFrame을 띄우기 전에 실시간 세션을 조회 및 세팅합니다.
+
                 try {
                     BacktestSessionDAO sessionDAO = new BacktestSessionDAO();
                     SessionDTO realtimeSession = sessionDAO.getOrCreateRealtimeSession(user.getUserId());
@@ -109,16 +91,19 @@ public class LoginFrame extends JFrame {
                     ex.printStackTrace();
                 }
 
-                new MainFrame(user.getUserId());   // 🔥 메인화면 실행
-                this.dispose();    // 로그인창 닫기
-            }
-            else {
+                new MainFrame(user.getUserId());
+                this.dispose();
+            } else {
                 JOptionPane.showMessageDialog(this, "아이디 또는 비밀번호가 일치하지 않습니다.", "로그인 실패", JOptionPane.ERROR_MESSAGE);
             }
         });
+
         card.add(loginBtn);
 
-        // 아이디/비밀번호 찾기
+        // ✅ 핵심: 어디에 포커스가 있든 Enter 누르면 loginBtn 클릭
+        getRootPane().setDefaultButton(loginBtn);
+
+        // 이하 링크/회원가입 이동은 너 원본 그대로
         card.add(Box.createVerticalStrut(25));
         JPanel linkPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 0));
         linkPanel.setOpaque(false);
@@ -128,7 +113,6 @@ public class LoginFrame extends JFrame {
         setupLink(findIdLabel);
         setupLink(findPwLabel);
 
-        // 아이디 찾기
         findIdLabel.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -150,22 +134,20 @@ public class LoginFrame extends JFrame {
             }
         });
 
-        // 비밀번호 찾기
         findPwLabel.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 String input = JOptionPane.showInputDialog(LoginFrame.this, "가입하신 이메일 주소를 입력해주세요.");
                 if (input == null) return;
 
-                final String email = input.trim();   // ✅ final 로 고정
+                final String email = input.trim();
                 if (email.isEmpty()) return;
 
                 if (UserDAO.isIdDuplicate(email)) {
-                    final String tempPw = "ONBIT" + (int)(Math.random() * 89999 + 10000);
+                    final String tempPw = "ONBIT" + (int) (Math.random() * 89999 + 10000);
 
                     new Thread(() -> {
                         try {
-                            // (안전하게) 메일 먼저 보내고 성공하면 DB 업데이트
                             EmailManager.sendMail(
                                     email,
                                     "[ONBIT] 임시 비밀번호 안내",
@@ -191,7 +173,6 @@ public class LoginFrame extends JFrame {
             }
         });
 
-
         linkPanel.add(findIdLabel);
         JLabel separator = new JLabel("|");
         separator.setForeground(Color.LIGHT_GRAY);
@@ -199,7 +180,6 @@ public class LoginFrame extends JFrame {
         linkPanel.add(findPwLabel);
         card.add(linkPanel);
 
-        // 회원가입 이동
         card.add(Box.createVerticalStrut(35));
         JPanel joinHintPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
         joinHintPanel.setOpaque(false);
