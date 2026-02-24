@@ -362,7 +362,6 @@ public class MainFrame extends JFrame {
     public void dispose() {
         UpbitWebSocketDao.getInstance().close();
         if (orderBookPanel != null) orderBookPanel.closeConnection();
-        DBConnection.close();
         super.dispose();
     }
 
@@ -371,6 +370,7 @@ public class MainFrame extends JFrame {
     // ════════════════════════════════════════════════
 
     public static void main(String[] args) {
+    	Runtime.getRuntime().addShutdownHook(new Thread(DBConnection::close));
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception e) {
