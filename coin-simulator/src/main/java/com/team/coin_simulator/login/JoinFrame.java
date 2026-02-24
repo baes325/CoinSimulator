@@ -8,27 +8,22 @@ import javax.swing.*;
 import javax.swing.border.LineBorder;
 import javax.swing.border.TitledBorder;
 
-import DAO.AssetDAO;
 import DAO.UserDAO;
-import DTO.UserDTO;
 import DAO.SignUpService;
-
-
+import DTO.UserDTO;
 
 public class JoinFrame extends JFrame {
     // 공통 폰트 설정
     private final Font fontBold = new Font("맑은 고딕", Font.BOLD, 14);
     private final Font fontPlain = new Font("맑은 고딕", Font.PLAIN, 12);
     private final Font fontSmall = new Font("맑은 고딕", Font.PLAIN, 11);
-
-    private UserDAO userDAO = new UserDAO();
     
     // 입력 필드 배열 (이메일, 비밀번호, 비밀번호 확인, 휴대폰 번호, 초기 자산)
     private JTextField[] fields = new JTextField[5]; 
 
     public JoinFrame() {
         setTitle("ONBIT 회원가입");
-        setSize(460, 800); // 넉넉한 높이 설정
+        setSize(460, 800);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setResizable(false);
@@ -96,7 +91,9 @@ public class JoinFrame extends JFrame {
         JButton joinBtn = new JButton("가입 완료");
         stylePrimaryBtn(joinBtn);
         
+        // ========================================
         // 회원가입 액션 정의 (버튼 클릭 및 Enter 키 공통 사용)
+        // ========================================
         ActionListener joinAction = new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -108,7 +105,9 @@ public class JoinFrame extends JFrame {
 
                 // 1. 모든 필드 입력 여부 확인
                 if (email.isEmpty() || pw.isEmpty() || pwConfirm.isEmpty() || phone.isEmpty() || initialAssetStr.isEmpty()) {
-                    JOptionPane.showMessageDialog(JoinFrame.this, "모든 정보를 빠짐없이 입력해주세요.", "입력 오류", JOptionPane.WARNING_MESSAGE);
+                    JOptionPane.showMessageDialog(JoinFrame.this, 
+                        "모든 정보를 빠짐없이 입력해주세요.", 
+                        "입력 오류", JOptionPane.WARNING_MESSAGE);
                     return;
                 }
 
@@ -117,7 +116,7 @@ public class JoinFrame extends JFrame {
                 try {
                     initialAsset = new BigDecimal(initialAssetStr.replaceAll(",", ""));
                     
-                    // 최소 금액 체크 (예: 1만원 이상)
+                    // 최소 금액 체크 (1만원 이상)
                     if (initialAsset.compareTo(new BigDecimal("10000")) < 0) {
                         JOptionPane.showMessageDialog(JoinFrame.this, 
                             "초기 투자금액은 최소 10,000원 이상이어야 합니다.", 
@@ -125,7 +124,7 @@ public class JoinFrame extends JFrame {
                         return;
                     }
                     
-                    // 최대 금액 체크 (예: 100억원 이하)
+                    // 최대 금액 체크 (100억원 이하)
                     if (initialAsset.compareTo(new BigDecimal("10000000000")) > 0) {
                         JOptionPane.showMessageDialog(JoinFrame.this, 
                             "초기 투자금액은 최대 10,000,000,000원 이하여야 합니다.", 
@@ -150,44 +149,50 @@ public class JoinFrame extends JFrame {
 
                 // 4. 비밀번호 일치 여부 확인
                 if (!pw.equals(pwConfirm)) {
-                    JOptionPane.showMessageDialog(JoinFrame.this, "입력하신 두 비밀번호가 서로 다릅니다.", "확인 필요", JOptionPane.ERROR_MESSAGE);
+                    JOptionPane.showMessageDialog(JoinFrame.this, 
+                        "입력하신 두 비밀번호가 서로 다릅니다.", 
+                        "확인 필요", JOptionPane.ERROR_MESSAGE);
                     return;
                 }
 
-                // 5. 이메일 중복 확인 및 가입 진행
-                if (userDAO.isIdDuplicate(email)) {
-                    JOptionPane.showMessageDialog(JoinFrame.this, "이미 사용 중인 이메일 주소입니다.", "중복 오류", JOptionPane.WARNING_MESSAGE);
+                // 5. 이메일 중복 확인
+                if (UserDAO.isIdDuplicate(email)) {
+                    JOptionPane.showMessageDialog(JoinFrame.this, 
+                        "이미 사용 중인 이메일 주소입니다.", 
+                        "중복 오류", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                
+                // 6. 회원가입 진행 (SignUpService 사용)
+                String phoneDigitsOnly = phone.replaceAll("[^0-9]", "");
+                
+                UserDTO user = new UserDTO();
+                user.setUserId(email);
+                user.setPassword(pw);
+                user.setNickname(email.split("@")[0]);
+                
+                long initialKRW = initialAsset.longValue();
+                
+                // ✅ SignUpService를 통한 통합 회원가입
+                // (users + simulation_sessions + assets 트랜잭션 처리)
+                boolean success = SignUpService.register(user, phoneDigitsOnly, initialKRW);
+                
+                if (success) {
+                    JOptionPane.showMessageDialog(JoinFrame.this,
+                        "회원가입이 정상적으로 완료되었습니다!\n" +
+                        "초기 투자금액: " + String.format("%,d", initialKRW) + "원\n" +
+                        "로그인 화면으로 이동합니다.",
+                        "가입 완료", JOptionPane.INFORMATION_MESSAGE);
+                    new LoginFrame();
+                    dispose();
                 } else {
-                    UserDTO user = new UserDTO();
-                    user.setUserId(email);
-                    user.setPassword(pw);
-                    user.setNickname(email.split("@")[0]); // 이메일 앞부분을 기본 닉네임으로 설정
-                    
-                   
-                 // 6) DB 저장 시도 (users + simulation_sessions + assets) — 트랜잭션
-                    String phoneDigitsOnly = phone.replaceAll("[^0-9]", "");
-
-                    UserDTO user = new UserDTO();
-                    user.setUserId(email);
-                    user.setPassword(pw);
-                    user.setNickname(email.split("@")[0]);
-
-                    boolean ok = SignUpService.register(user, phoneDigitsOnly);
-
-                    long initialKRW = initialAsset.longValue();
-                    boolean ok = SignUpService.register(user, phoneDigitsOnly, initialKRW);
-                    
-                    if (ok) {
-                        JOptionPane.showMessageDialog(JoinFrame.this,
-                            "회원가입이 정상적으로 완료되었습니다!\n로그인 화면으로 이동합니다.",
-                            "가입 완료", JOptionPane.INFORMATION_MESSAGE);
-                        new LoginFrame();
-                        dispose();
-                    } else {
-                        JOptionPane.showMessageDialog(JoinFrame.this,
-                            "서버(DB) 오류로 가입에 실패했습니다.\n콘솔 로그(SQLException)를 확인하세요.",
-                            "DB 오류", JOptionPane.ERROR_MESSAGE);
-                    }
+                    JOptionPane.showMessageDialog(JoinFrame.this,
+                        "서버 오류로 가입에 실패했습니다.\n" +
+                        "콘솔 로그를 확인하거나 잠시 후 다시 시도해주세요.",
+                        "DB 오류", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        };
         
         // 버튼 클릭 시 회원가입
         joinBtn.addActionListener(joinAction);
@@ -202,8 +207,8 @@ public class JoinFrame extends JFrame {
         
         // 로그인으로 돌아가기
         JButton backBtn = new JButton(
-        	    "<html>이미 회원이신가요? <font color='#2163B8'>로그인하기</font></html>"
-        	);
+            "<html>이미 회원이신가요? <font color='#2163B8'>로그인하기</font></html>"
+        );
         backBtn.setFont(fontSmall);
         backBtn.setForeground(Color.GRAY);
         backBtn.setBorderPainted(false);
@@ -225,7 +230,6 @@ public class JoinFrame extends JFrame {
      * 비밀번호 복잡성 검증 (Regex)
      */
     private boolean isValidPassword(String password) {
-        // 영문, 숫자, 특수문자(!@#$%^&*)가 포함된 8~16자 정규식
         String regex = "^(?=.*[A-Za-z])(?=.*\\d)(?=.*[!@#$%^&*])[A-Za-z\\d!@#$%^&*]{8,16}$";
         return password.matches(regex);
     }
