@@ -9,7 +9,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.team.coin_simulator.DBConnection;
-
 import DTO.ExecutionDTO;
 
 /**
@@ -177,7 +176,9 @@ public class HistoryDAO {
             "ORDER BY e.executed_at DESC";
         try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, userId); pstmt.setDate(2, startDate); pstmt.setDate(3, endDate);
+            pstmt.setString(1, userId); 
+            pstmt.setDate(2, startDate); 
+            pstmt.setDate(3, endDate);
             try (ResultSet rs = pstmt.executeQuery()) { while (rs.next()) list.add(mapResultSetToDTO(rs)); }
         } catch (SQLException e) { e.printStackTrace(); }
         return list;

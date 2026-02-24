@@ -6,8 +6,6 @@ import java.sql.Timestamp;
 
 
 public class OrderDTO {
-
-
 	// 1. PK
     private Long orderId;
 

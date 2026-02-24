@@ -17,9 +17,9 @@ import DTO.OrderDTO;
  *
  * 레이아웃:
  * ┌─────────────────────────────────────────────┐
- * │  OpenOrder_TopControlPanel (NORTH - 필터)   │
+ * │  OpenOrder_TopControlPanel (NORTH - 필터)    │
  * ├─────────────────────────────────────────────┤
- * │  OpenOrder_CenterDisplayPanel (CENTER - 테이블) │
+ * │  OpenOrder_CenterDisplayPanel (CENTER - 테이블)│
  * └─────────────────────────────────────────────┘
  */
 public class OpenOrder_MainPanel extends JPanel {
@@ -60,7 +60,6 @@ public class OpenOrder_MainPanel extends JPanel {
         });
 
         topPanel.addCancelAllListener(e -> handleCancelAll());
-
         tablePanel.setCancelOrderListener(this::handleCancelOrder);
     }
 

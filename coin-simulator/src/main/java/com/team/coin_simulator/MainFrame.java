@@ -76,7 +76,7 @@ public class MainFrame extends JFrame {
     private BacktestTimeControlPanel backtestControlPanel;
     private CandleChartBacktestAdapter chartBacktestAdapter;
 
-    private long currentSessionId = 0L;
+    private long currentSessionId = 1L;
 
     // ════════════════════════════════════════════════
     //  생성자
@@ -185,7 +185,7 @@ public class MainFrame extends JFrame {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBackground(Color.WHITE);
 
-        historyPanel = new HistoryPanel(currentUserId);
+        historyPanel = new HistoryPanel(currentUserId, currentSessionId);
         historyPanel.setPreferredSize(new Dimension(350, 0));
         historyPanel.addCoinSelectionListener(this::onCoinSelected);
 
@@ -230,7 +230,14 @@ public class MainFrame extends JFrame {
             investmentPanel.setSessionId(currentSessionId);
             investmentPanel.refreshAll();
         }
-
+        
+        if (historyPanel != null) {
+            historyPanel.setSessionId(currentSessionId);
+        }
+        if (orderPanel != null) {
+            orderPanel.setSessionId(currentSessionId);
+        }
+        
         java.time.LocalDateTime startTime   = selectedSession.getStartSimTime().toLocalDateTime();
         java.time.LocalDateTime currentSimTime = selectedSession.getCurrentSimTime() != null
                 ? selectedSession.getCurrentSimTime().toLocalDateTime()
@@ -257,6 +264,14 @@ public class MainFrame extends JFrame {
     public void returnToRealtimeMode() {
         SwingUtilities.invokeLater(() -> {
             System.out.println("[MainFrame] 실시간 모드로 전환됨");
+            this.currentSessionId = 1L;
+            
+            if (investmentPanel != null) investmentPanel.setSessionId(1L);
+            if (historyPanel != null) historyPanel.setSessionId(1L);
+            //백->실시간 돌아올 때
+            if (orderPanel != null) {
+                orderPanel.setSessionId(1L); 
+            }
             chartPanel.resetToRealtimeMode();
             UpbitWebSocketDao.getInstance().start();
         });

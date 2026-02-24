@@ -4,20 +4,25 @@ import DAO.*;
 import DTO.*;
 import com.team.coin_simulator.CoinConfig; 
 import com.team.coin_simulator.Market_Panel.*;
-import com.team.coin_simulator.DBConnection;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.*;
 import java.util.List;
 
 public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListener {
     
     private OrderDAO orderDAO = new OrderDAO();
-    private Map<String, BigDecimal> mockBalance = new HashMap<>();
-    private Map<String, BigDecimal> mockLocked = new HashMap<>();
+    private AssetDAO assetDAO = new AssetDAO(); // 💡 진짜 자산을 불러올 DAO 추가
+    private OpenOrderDAO openOrderDAO = new OpenOrderDAO();
+    
+    // 💡 가짜(mock) 데이터 삭제하고, DB에서 불러온 진짜 잔고를 담을 맵
+    private Map<String, BigDecimal> realBalance = new HashMap<>();
+    private Map<String, BigDecimal> realLocked = new HashMap<>();
+    
     private List<OrderDTO> openOrders = new ArrayList<>();
     private Map<Long, String> orderCoinMap = new HashMap<>();
 
@@ -26,9 +31,13 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
     private JTextField priceField, qtyField, marketAmountField;
     private JLabel valAvailable, valTotal, valExpected, lblSelectedCoinInfo, lblMarketUnit;
     private JButton btnAction;
+    
+    // 💡 [master 장점] 분리된 주문 정정 패널 도입
     private OrderEditListPanel orderEditListPanel; 
 
     private String userId;
+    private long sessionId = 1L; // 💡 현재 세션 ID 필드 유지
+    
     private String selectedCoinCode = "BTC"; 
     private BigDecimal currentSelectedPrice = BigDecimal.ZERO; 
     private int sideIdx = 0;
@@ -61,8 +70,8 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         // 1. 매수/매도 입력 패널
         JPanel tradePanel = createTradePanel();
 
-        // 2. 분리한 주문 정정/취소 리스트 패널 장착 (콜백으로 loadUserData 전달)
-        orderEditListPanel = new OrderEditListPanel(this.userId, this::loadUserData);
+        // 2. 분리한 주문 정정/취소 리스트 패널 장착 (콜백으로 refreshDBData 전달)
+        orderEditListPanel = new OrderEditListPanel(this.userId, this::refreshDBData);
 
         inputCardPanel.add(tradePanel, "TRADE");
         inputCardPanel.add(orderEditListPanel, "EDIT");
@@ -75,7 +84,7 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         btnEdit.addActionListener(e -> { switchSide(-1, btnEdit, btnBid, btnAsk); cardLayout.show(inputCardPanel, "EDIT"); });
 
         // 초기 데이터 로드 및 웹소켓 시작
-        loadUserData();
+        refreshDBData();
         UpbitWebSocketDao.getInstance().addListener(this);
     }
 
@@ -127,11 +136,21 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         infoContainer.add(availRow); infoContainer.add(Box.createVerticalStrut(10));
         infoContainer.add(totalRow); infoContainer.add(Box.createVerticalStrut(20));
 
-        btnAction = new JButton("매수");
+        // [SuBackT 장점] 더 세련된 커스텀 페인팅 버튼 유지
+        btnAction = new JButton("매수") {
+            @Override
+            protected void paintComponent(Graphics g) {
+                if (getModel().isArmed()) g.setColor(getBackground().darker());
+                else g.setColor(getBackground());
+                g.fillRect(0, 0, getWidth(), getHeight());
+                super.paintComponent(g);
+            }
+        };
         btnAction.setBackground(COLOR_BID); btnAction.setForeground(Color.WHITE);
         btnAction.setFont(new Font("맑은 고딕", Font.BOLD, 18));
-        btnAction.setContentAreaFilled(false); btnAction.setOpaque(true); 
-        btnAction.setPreferredSize(btnSize); btnAction.setMaximumSize(btnSize);
+        btnAction.setContentAreaFilled(false); btnAction.setOpaque(false); 
+        btnAction.setFocusPainted(false);
+        btnAction.setPreferredSize(btnSize); btnAction.setMinimumSize(btnSize); btnAction.setMaximumSize(btnSize);
         btnAction.setAlignmentX(Component.CENTER_ALIGNMENT);
         btnAction.addActionListener(e -> handleOrderAction());
 
@@ -146,9 +165,51 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
             public void changedUpdate(DocumentEvent e) { updateOrderSummary(); }
         };
         priceField.getDocument().addDocumentListener(updateListener);
-        qtyField.getDocument().addDocumentListener(updateListener);
+        if (qtyField != null) qtyField.getDocument().addDocumentListener(updateListener);
 
         return tradePanel;
+    }
+    
+    // 💡 세션 변경 시 DB에서 잔고 및 미체결 주문 다시 불러오기
+    public void setSessionId(long sessionId) {
+        this.sessionId = sessionId;
+        refreshDBData();
+    }
+    
+    // 💡 [핵심] DB와 동기화하는 메서드 (가짜 데이터 대신 진짜 데이터를 읽어옴)
+    private void refreshDBData() {
+        realBalance.clear();
+        realLocked.clear();
+        
+        // 1. 진짜 잔고 불러오기
+        List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, this.sessionId);
+        
+        System.out.println("\n[🔍 OrderPanel DB 조회 테스트]");
+        System.out.println("▶ 조회 요청 ID: " + this.userId);
+        System.out.println("▶ 조회 요청 세션방: " + this.sessionId);
+        System.out.println("▶ DB에서 가져온 자산 개수: " + assets.size() + "개");
+        
+        for (AssetDTO a : assets) {
+            System.out.println("  - " + a.getCurrency() + " 잔고: " + a.getBalance() + " / 묶인돈(locked): " + a.getLocked());
+            realBalance.put(a.getCurrency(), a.getBalance());
+            realLocked.put(a.getCurrency(), a.getLocked());
+        }
+        System.out.println("-----------------------------------\n");
+        
+        // 2. 이 세션의 미체결 주문 불러오기
+        openOrders = openOrderDAO.getOpenOrders(this.userId, this.sessionId);
+        orderCoinMap.clear();
+        for (OrderDTO o : openOrders) {
+            orderCoinMap.put(o.getOrderId(), o.getMarket().replace("KRW-", ""));
+        }
+        
+        SwingUtilities.invokeLater(() -> {
+            updateInfoLabel();
+            // 💡 master가 만들어둔 외부 패널로 진짜 데이터 밀어넣기!
+            if (orderEditListPanel != null) {
+                orderEditListPanel.updateData(openOrders, orderCoinMap, realBalance, realLocked);
+            }
+        });
     }
 
     public void setSelectedCoin(String coinSymbol) {
@@ -175,6 +236,7 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         BigDecimal currentPrice = new BigDecimal(cleanPrice);
         latestPrices.put(symbol, currentPrice);
 
+        // [master 장점] 💡 시세 업데이트 시 자동체결 엔진 구동 쓰레드
         new Thread(() -> {
             List<OrderDTO> executedList = orderDAO.checkAndExecuteLimitOrders(symbol, currentPrice);
             if (executedList != null && !executedList.isEmpty()) {
@@ -186,7 +248,7 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
                     SwingUtilities.invokeLater(() -> {
                         JFrame parentFrame = (JFrame) SwingUtilities.getWindowAncestor(OrderPanel.this);
                         if(parentFrame != null) com.team.coin_simulator.Alerts.NotificationUtil.showToast(parentFrame, msg);
-                        loadUserData(); // 체결 성공 시 DB 새로고침!
+                        refreshDBData(); // 체결 성공 시 DB 새로고침!
                     });
                 }
             }
@@ -208,7 +270,7 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
 
     private void updateInfoLabel() {
         String assetCode = (sideIdx == 0) ? "KRW" : selectedCoinCode; 
-        BigDecimal balance = mockBalance.getOrDefault(assetCode, BigDecimal.ZERO);
+        BigDecimal balance = realBalance.getOrDefault(assetCode, BigDecimal.ZERO);
         String format = assetCode.equals("KRW") ? "%,.0f" : "%.8f";
         valAvailable.setText(String.format(format + " %s", balance, assetCode));
     }
@@ -231,7 +293,8 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
             if (currentSelectedPrice.compareTo(BigDecimal.ZERO) <= 0 || amtStr.isEmpty()) { valExpected.setText("-"); return; }
             BigDecimal inputVal = new BigDecimal(amtStr);
             if (sideIdx == 0) { 
-                valExpected.setText("예상 수량: " + inputVal.divide(currentSelectedPrice, 8, BigDecimal.ROUND_DOWN).toPlainString() + " " + selectedCoinCode);
+                BigDecimal expectedQty = inputVal.divide(currentSelectedPrice, 8, RoundingMode.DOWN);
+                valExpected.setText("예상 수량: " + expectedQty.toPlainString() + " " + selectedCoinCode);
             } else { 
                 valExpected.setText("예상 수령: " + String.format("%,.0f", inputVal.multiply(currentSelectedPrice)) + " KRW");
             }
@@ -266,22 +329,28 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
             BigDecimal qty = new BigDecimal(qtyField.getText().replace(",", "").trim());
             BigDecimal requiredAmount = (sideIdx == 0) ? price.multiply(qty) : qty;
             String currency = (sideIdx == 0) ? "KRW" : selectedCoinCode;
+            
+            // 💡 진짜 잔고로 결제 여부 검사
+            BigDecimal balance = realBalance.getOrDefault(currency, BigDecimal.ZERO);
 
-            if (mockBalance.getOrDefault(currency, BigDecimal.ZERO).compareTo(requiredAmount) < 0) {
+            if (balance.compareTo(requiredAmount) < 0) {
                 throw new RuntimeException("주문 가능 잔고가 부족합니다.");
             }
 
             OrderDTO order = new OrderDTO();
             order.setOrderId(System.currentTimeMillis());
+            order.setUserId(this.userId); 
+            order.setSessionId(this.sessionId); 
+            order.setMarket("KRW-" + selectedCoinCode); 
             order.setSide(sideIdx == 0 ? "BID" : "ASK");
             order.setOriginalPrice(price);
             order.setOriginalVolume(qty);
             order.setRemainingVolume(qty);
             order.setStatus("WAIT");
 
-            if (orderDAO.insertOrder(order, this.userId)) {
+            if (orderDAO.insertOrder(order)) {
                 JOptionPane.showMessageDialog(this, "지정가 주문 접수 완료");
-                loadUserData(); // 주문 접수 후 데이터 새로고침
+                refreshDBData(); // 💡 주문 접수 후 DB 새로고침
             } else throw new RuntimeException("데이터베이스 저장에 실패했습니다.");
         } catch (Exception e) { JOptionPane.showMessageDialog(this, "주문 오류: " + e.getMessage(), "알림", JOptionPane.ERROR_MESSAGE); }
     }
@@ -291,53 +360,45 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
             BigDecimal inputVal = new BigDecimal(marketAmountField.getText().replace(",", "").trim());
 
             if (sideIdx == 0) { 
-                if (mockBalance.getOrDefault("KRW", BigDecimal.ZERO).compareTo(inputVal) < 0) throw new RuntimeException("KRW 잔고가 부족합니다.");
-                BigDecimal buyQty = OrderCalc.calculateMarketBuyQuantity(inputVal, currentSelectedPrice);
+                BigDecimal krwBal = realBalance.getOrDefault("KRW", BigDecimal.ZERO);
+                if (krwBal.compareTo(inputVal) < 0) throw new RuntimeException("KRW 잔고가 부족합니다.");
                 
-                OrderDTO marketOrder = new OrderDTO(); marketOrder.setOrderId(System.currentTimeMillis()); marketOrder.setSide("BID"); marketOrder.setStatus("DONE");
+                BigDecimal buyQty = OrderCalc.calculateMarketBuyQuantity(inputVal, currentSelectedPrice);
+                OrderDTO marketOrder = new OrderDTO(); 
+                marketOrder.setOrderId(System.currentTimeMillis()); 
+                marketOrder.setUserId(this.userId); 
+                marketOrder.setSessionId(this.sessionId); 
+                marketOrder.setMarket("KRW-" + selectedCoinCode); 
+                marketOrder.setSide("BID"); 
+                marketOrder.setStatus("DONE");
+                
                 if (orderDAO.executeMarketOrder(marketOrder, this.userId, currentSelectedPrice, buyQty, inputVal)) {
                     com.team.coin_simulator.Alerts.NotificationUtil.showToast((JFrame) SwingUtilities.getWindowAncestor(this), String.format("[체결] %s 시장가 매수 완료 (%.8f개)", selectedCoinCode, buyQty));
-                    loadUserData();
+                    refreshDBData(); // 💡 DB 동기화
                 } else throw new RuntimeException("DB 저장 실패");
             } else { 
-                if (mockBalance.getOrDefault(selectedCoinCode, BigDecimal.ZERO).compareTo(inputVal) < 0) throw new RuntimeException(selectedCoinCode + " 잔고가 부족합니다.");
+                BigDecimal coinBal = realBalance.getOrDefault(selectedCoinCode, BigDecimal.ZERO);
+                if (coinBal.compareTo(inputVal) < 0) throw new RuntimeException(selectedCoinCode + " 잔고가 부족합니다.");
+                
                 BigDecimal sellTotalKRW = inputVal.multiply(currentSelectedPrice);
-
-                OrderDTO marketOrder = new OrderDTO(); marketOrder.setOrderId(System.currentTimeMillis()); marketOrder.setSide("ASK"); marketOrder.setStatus("DONE");
+                OrderDTO marketOrder = new OrderDTO(); 
+                marketOrder.setOrderId(System.currentTimeMillis()); 
+                marketOrder.setUserId(this.userId); 
+                marketOrder.setSessionId(this.sessionId); 
+                marketOrder.setMarket("KRW-" + selectedCoinCode); 
+                marketOrder.setSide("ASK"); 
+                marketOrder.setStatus("DONE");
+                
                 if (orderDAO.executeMarketOrder(marketOrder, this.userId, currentSelectedPrice, inputVal, sellTotalKRW)) {
                     com.team.coin_simulator.Alerts.NotificationUtil.showToast((JFrame) SwingUtilities.getWindowAncestor(this), String.format("[체결] %s 시장가 매도 완료 (%,.0f KRW)", selectedCoinCode, sellTotalKRW));
-                    loadUserData();
+                    refreshDBData(); // 💡 DB 동기화
                 } else throw new RuntimeException("DB 저장 실패");
             }
             marketAmountField.setText(""); 
         } catch (Exception e) { JOptionPane.showMessageDialog(this, "주문 실패: " + e.getMessage(), "에러", JOptionPane.ERROR_MESSAGE); }
     }
 
- //퍼센트 버튼 패널
-    private JPanel createPercentPanel() {
-        JPanel p = new JPanel(new GridLayout(1, 5, 5, 0)); 
-        p.setBackground(Color.WHITE);
-        p.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
-        p.setAlignmentX(Component.LEFT_ALIGNMENT); // [추가] 왼쪽 정렬 고정 (안 밀려나게)
-
-        String[] labels = {"10%", "25%", "50%", "100%", "직접"};
-        double[] fractions = {0.10, 0.25, 0.50, 1.00, 0.0};
-
-        for (int i = 0; i < labels.length; i++) {
-            JButton btn = new JButton(labels[i]);
-            btn.setBackground(new Color(245, 245, 245));
-            btn.setFont(new Font("맑은 고딕", Font.PLAIN, 12));
-            btn.setMargin(new Insets(2, 0, 2, 0));
-            btn.setFocusPainted(false);
-            
-            final double frac = fractions[i];
-            btn.addActionListener(e -> applyPercent(frac));
-            p.add(btn);
-        }
-        return p;
-    }
-
-    //지정가 폼
+    // 💡 [master 장점] 지정가 폼 (버튼 팩 추가)
     private JPanel createLimitForm() {
         JPanel p = new JPanel(); 
         p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS)); 
@@ -347,7 +408,6 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         lblPrice.setAlignmentX(Component.LEFT_ALIGNMENT); 
         p.add(lblPrice);
         
-        //가격 입력칸 오른쪽에 [+] [-] 버튼 팩 추가
         JPanel priceRow = new JPanel(new BorderLayout()); 
         priceRow.setBackground(Color.WHITE);
         priceRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
@@ -355,7 +415,6 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         priceField = new JTextField(); styleField(priceField);
         priceRow.add(priceField, BorderLayout.CENTER);
         
-        //버튼 팩
         JPanel btnPanel = new JPanel(new GridLayout(1, 2, 0, 0));
         JButton btnMinus = new JButton("-");
         JButton btnPlus = new JButton("+");
@@ -364,13 +423,10 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         btnMinus.setFont(mathFont); btnMinus.setBackground(new Color(240, 240, 240)); btnMinus.setFocusPainted(false);
         btnPlus.setFont(mathFont); btnPlus.setBackground(new Color(240, 240, 240)); btnPlus.setFocusPainted(false);
         
-        //adjustPrice 메서드 연결 (true면 더하기, false면 빼기)
         btnMinus.addActionListener(e -> adjustPrice(false));
         btnPlus.addActionListener(e -> adjustPrice(true));
         
-        btnPanel.add(btnMinus);
-        btnPanel.add(btnPlus);
-        
+        btnPanel.add(btnMinus); btnPanel.add(btnPlus);
         priceRow.add(btnPanel, BorderLayout.EAST);
         
         p.add(priceRow); 
@@ -393,7 +449,7 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         return p;
     }
 
-    //시장가 폼
+    // 💡 [master 장점] 시장가 폼 (퍼센트 추가)
     private JPanel createMarketForm() {
         JPanel p = new JPanel(); 
         p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS)); 
@@ -432,31 +488,33 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         tf.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
         tf.setHorizontalAlignment(JTextField.RIGHT);
     }
-    
-    private void loadUserData() {
-        mockBalance.clear(); mockLocked.clear(); openOrders.clear(); orderCoinMap.clear();
 
-        orderDAO.getUserAssets(this.userId, mockBalance, mockLocked);
-        mockBalance.putIfAbsent("KRW", BigDecimal.ZERO);
-        mockLocked.putIfAbsent("KRW", BigDecimal.ZERO);
+    // 💡 [master 장점] 퍼센트 버튼 패널
+    private JPanel createPercentPanel() {
+        JPanel p = new JPanel(new GridLayout(1, 5, 5, 0)); 
+        p.setBackground(Color.WHITE);
+        p.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
+        p.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        List<OrderDTO> fetchedOrders = orderDAO.getOpenOrders(this.userId);
-        for (OrderDTO order : fetchedOrders) {
-            openOrders.add(order);
-            orderCoinMap.put(order.getOrderId(), order.getMarket().replace("KRW-", ""));
+        String[] labels = {"10%", "25%", "50%", "100%", "직접"};
+        double[] fractions = {0.10, 0.25, 0.50, 1.00, 0.0};
+
+        for (int i = 0; i < labels.length; i++) {
+            JButton btn = new JButton(labels[i]);
+            btn.setBackground(new Color(245, 245, 245));
+            btn.setFont(new Font("맑은 고딕", Font.PLAIN, 12));
+            btn.setMargin(new Insets(2, 0, 2, 0));
+            btn.setFocusPainted(false);
+            
+            final double frac = fractions[i];
+            btn.addActionListener(e -> applyPercent(frac));
+            p.add(btn);
         }
-
-        SwingUtilities.invokeLater(() -> {
-            updateInfoLabel();
-            if (orderEditListPanel != null) {
-                orderEditListPanel.updateData(openOrders, orderCoinMap, mockBalance, mockLocked);
-            }
-        });
+        return p;
     }
 
-    //퍼센트에 맞춰 내 지갑 돈을 계산해주는 로직
+    // 💡 [수정] 진짜 잔고(realBalance)를 사용해 퍼센트 자동 입력 기능 적용
     private void applyPercent(double fraction) {
-        // "직접입력" 버튼 (비우기)
         if (fraction == 0.0) { 
             if (isLimitMode) qtyField.setText("");
             else marketAmountField.setText("");
@@ -467,7 +525,7 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         try {
             if (isLimitMode) { // [지정가 모드]
                 if (sideIdx == 0) { // 매수 (KRW 기준 -> 수량 계산)
-                    BigDecimal availKrw = mockBalance.getOrDefault("KRW", BigDecimal.ZERO);
+                    BigDecimal availKrw = realBalance.getOrDefault("KRW", BigDecimal.ZERO);
                     
                     String pStr = priceField.getText().replace(",", "").trim();
                     if (pStr.isEmpty()) { 
@@ -481,18 +539,18 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
                     qtyField.setText(qty.compareTo(BigDecimal.ZERO) == 0 ? "" : qty.toPlainString());
                     
                 } else { // 매도 (코인 기준 -> 수량 계산)
-                    BigDecimal availCoin = mockBalance.getOrDefault(selectedCoinCode, BigDecimal.ZERO);
+                    BigDecimal availCoin = realBalance.getOrDefault(selectedCoinCode, BigDecimal.ZERO);
                     BigDecimal qty = OrderCalc.calcPercentSellQty(availCoin, fraction);
                     qtyField.setText(qty.compareTo(BigDecimal.ZERO) == 0 ? "" : qty.toPlainString());
                 }
             } else { // [시장가 모드]
                 if (sideIdx == 0) { // 매수 (KRW 기준 -> 총액 계산)
-                    BigDecimal availKrw = mockBalance.getOrDefault("KRW", BigDecimal.ZERO);
+                    BigDecimal availKrw = realBalance.getOrDefault("KRW", BigDecimal.ZERO);
                     BigDecimal amt = OrderCalc.calcPercentMarketBuyAmount(availKrw, fraction);
                     marketAmountField.setText(amt.compareTo(BigDecimal.ZERO) == 0 ? "" : amt.toPlainString());
                     
                 } else { // 매도 (코인 기준 -> 수량 계산)
-                    BigDecimal availCoin = mockBalance.getOrDefault(selectedCoinCode, BigDecimal.ZERO);
+                    BigDecimal availCoin = realBalance.getOrDefault(selectedCoinCode, BigDecimal.ZERO);
                     BigDecimal qty = OrderCalc.calcPercentSellQty(availCoin, fraction);
                     marketAmountField.setText(qty.compareTo(BigDecimal.ZERO) == 0 ? "" : qty.toPlainString());
                 }
@@ -503,13 +561,12 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         }
     }
     
- //가격 [+] [-] 버튼
+    // 💡 [master 장점] 가격 [+] [-] 버튼 조작
     private void adjustPrice(boolean isPlus) {
         try {
             String pStr = priceField.getText().replace(",", "").trim();
             BigDecimal currentVal;
             
-            // 1. 입력창이 비어있으면 현재 시세를 기준으로 시작
             if (pStr.isEmpty()) {
                 if (currentSelectedPrice.compareTo(BigDecimal.ZERO) <= 0) return;
                 currentVal = currentSelectedPrice;
@@ -517,25 +574,20 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
                 currentVal = new BigDecimal(pStr);
             }
 
-            // 2. OrderCalc에서 이 가격에 맞는 '호가 단위'를 가져옴
             BigDecimal tickSize = OrderCalc.getTickSize(currentVal);
             
-            // 3. 더하거나 빼기
             if (isPlus) {
                 currentVal = currentVal.add(tickSize);
             } else {
                 currentVal = currentVal.subtract(tickSize);
                 if (currentVal.compareTo(BigDecimal.ZERO) <= 0) {
-                    currentVal = tickSize; // 마이너스 가격 방지 (최소 1호가 유지)
+                    currentVal = tickSize; 
                 }
             }
             
-            // 4. 소수점 깔끔하게 처리해서 다시 화면에 꽂아주기
             priceField.setText(currentVal.stripTrailingZeros().toPlainString());
-            updateOrderSummary(); // 총액도 새로고침
+            updateOrderSummary(); 
             
-        } catch (Exception ex) {
-            // 사용자가 숫자가 아닌 이상한 글자를 쳤을 때는 무시
-        }
+        } catch (Exception ex) {}
     }
 }

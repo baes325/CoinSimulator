@@ -36,7 +36,7 @@ public class Investment_details_MainPanel extends JPanel {
     private CardLayout cardLayout;
     private JPanel contentPanel;
 
-    // [수정] 모든 하위 패널이 sessionId를 받도록 통일
+    // 모든 하위 패널이 sessionId를 받도록 통일
     private Asset_MainPanel      assetPanel;
     private ProfitLoss_MainPanel profitLossPanel;
     private History_MainPanel    historyPanel;
@@ -64,7 +64,7 @@ public class Investment_details_MainPanel extends JPanel {
         contentPanel = new JPanel(cardLayout);
         contentPanel.setBackground(Color.WHITE);
 
-        // [수정] 모든 하위 패널 생성 시 sessionId 전달
+        // 모든 하위 패널 생성 시 sessionId 전달
         assetPanel      = new Asset_MainPanel(userId, sessionId);
         profitLossPanel = new ProfitLoss_MainPanel(userId, sessionId);
         historyPanel    = new History_MainPanel(userId, sessionId);
@@ -126,11 +126,23 @@ public class Investment_details_MainPanel extends JPanel {
     public void setSessionId(long newSessionId) {
         this.sessionId = newSessionId;
 
-        // [수정] 모든 하위 패널에 새 세션 ID 전파
-        if (assetPanel      != null) { assetPanel.setSessionId(newSessionId);      assetPanel.initAssetData(); }
-        if (profitLossPanel != null) { profitLossPanel.setSessionId(newSessionId); }
-        if (historyPanel    != null) { historyPanel.setSessionId(newSessionId);    }
-        if (openOrderPanel  != null) { openOrderPanel.setSessionId(newSessionId);  }
+        // 모든 하위 패널에 새 세션 ID 전파 및 즉시 새로고침 (두 브랜치의 장점 완벽 병합!)
+        if (assetPanel != null) { 
+            assetPanel.setSessionId(newSessionId); 
+            assetPanel.initAssetData(); 
+        }
+        if (profitLossPanel != null) { 
+            profitLossPanel.setSessionId(newSessionId); 
+            profitLossPanel.refresh(30); 
+        }
+        if (historyPanel != null) { 
+            historyPanel.setSessionId(newSessionId); 
+            historyPanel.refresh(); 
+        }
+        if (openOrderPanel != null) { 
+            openOrderPanel.setSessionId(newSessionId); 
+            openOrderPanel.refresh(); 
+        }
     }
 
     // ── 독립 실행 테스트 ──────────────────────────────────────────

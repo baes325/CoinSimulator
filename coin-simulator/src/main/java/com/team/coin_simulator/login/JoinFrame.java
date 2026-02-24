@@ -163,8 +163,8 @@ public class JoinFrame extends JFrame {
                     boolean userCreated = userDAO.insertUser(user, phone);
                     
                     if (userCreated) {
-                        // 사용자 생성 성공 -> 초기 자산 생성
-                        boolean assetCreated = AssetDAO.createInitialAsset(email, initialAsset);
+                    	// 사용자 생성 성공 -> 초기 자산 생성
+                    	boolean assetCreated = AssetDAO.createInitialAsset(email, 1L, initialAsset);
                         
                         if (assetCreated) {
                             JOptionPane.showMessageDialog(JoinFrame.this, 

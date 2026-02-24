@@ -63,6 +63,7 @@ public class HistoryPanel extends JPanel implements UpbitWebSocketDao.TickerList
     // [추가] 코인 선택 리스너 목록
     private List<CoinSelectionListener> coinSelectionListeners = new ArrayList<>();
     
+    private long sessionId;
     /**
      * 코인 선택 리스너 인터페이스
      */
@@ -86,8 +87,9 @@ public class HistoryPanel extends JPanel implements UpbitWebSocketDao.TickerList
         }
     }
     
-    public HistoryPanel(String loginUser) {
-    	this.loginUser = loginUser;
+    public HistoryPanel(String loginUser, long sessionId) {
+        this.loginUser = loginUser;
+        this.sessionId = sessionId;
         setLayout(new BorderLayout());
         setBackground(Color.WHITE);
         setMinimumSize(new Dimension(300, 500));
@@ -303,7 +305,7 @@ public class HistoryPanel extends JPanel implements UpbitWebSocketDao.TickerList
     public void loadOwnedAssets() {
         ownedCoinPanel.removeAll();
         
-        List<AssetDTO> assets = assetDAO.getUserAssets(loginUser); 
+        List<AssetDTO> assets = assetDAO.getUserAssets(loginUser, sessionId);
 
         if (assets.isEmpty()) {
             ownedCoinPanel.add(new JLabel("보유 중인 코인이 없습니다.", SwingConstants.CENTER));
@@ -384,6 +386,11 @@ public class HistoryPanel extends JPanel implements UpbitWebSocketDao.TickerList
                 }
             }
         });
+    }
+    
+    public void setSessionId(long newSessionId) {
+        this.sessionId = newSessionId;
+        loadOwnedAssets(); // 자산 목록 다시 불러오기
     }
     
 //    public static void main(String[] args) {

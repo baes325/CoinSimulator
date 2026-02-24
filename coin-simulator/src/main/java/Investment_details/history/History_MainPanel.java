@@ -6,7 +6,9 @@ import java.sql.Date;
 import java.time.LocalDate;
 import java.util.List;
 
+import javax.swing.JFrame;
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 
 import DAO.HistoryDAO;
 import DTO.ExecutionDTO;
@@ -129,5 +131,20 @@ public class History_MainPanel extends JPanel {
     public void setSessionId(long sessionId) {
         this.sessionId = sessionId;
         loadRecentMonth(); // 세션 변경 시 기간 초기화 후 재조회
+    }
+
+    // ── 독립 실행 테스트 ──────────────────────────────────────────
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            JFrame frame = new JFrame("거래내역 테스트");
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            frame.setSize(1100, 700);
+            frame.setLocationRelativeTo(null);
+            
+            History_MainPanel panel = new History_MainPanel("user_01", 1L); // 💡 테스트용 기본값 1L
+            frame.add(panel);
+            frame.setVisible(true);
+        });
     }
 }

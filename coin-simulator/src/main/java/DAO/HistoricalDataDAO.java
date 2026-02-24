@@ -5,7 +5,9 @@ import DTO.TickerDto;
 import java.math.BigDecimal;
 import java.sql.*;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -197,5 +199,40 @@ public class HistoricalDataDAO {
             e.printStackTrace();
         }
         return candles;
+    }
+    
+    /**
+     *특정 기간 동안 코인별 최고가와 최저가만 요약해서 가져옵니다.
+     * 수천 개의 캔들을 자바로 불러오지 않고, DB에서 MAX/MIN 연산 후 단 1줄만 반환합니다.
+     */
+    public List<DTO.MarketCandleDTO> getCandlesBetween(LocalDateTime start, LocalDateTime end) {
+        List<DTO.MarketCandleDTO> list = new ArrayList<>();
+        
+        // 시간 구간 내 코인별 최고가, 최저가 요약 쿼리
+        String sql = "SELECT market, MAX(high_price) as max_high, MIN(low_price) as min_low " +
+                     "FROM market_candle " +
+                     "WHERE candle_date_time_kst > ? AND candle_date_time_kst <= ? " +
+                     "GROUP BY market";
+        
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setTimestamp(1, Timestamp.valueOf(start));
+            pstmt.setTimestamp(2, Timestamp.valueOf(end));
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    DTO.MarketCandleDTO dto = new DTO.MarketCandleDTO();
+                    dto.setMarket(rs.getString("market"));
+                    dto.setHighPrice(rs.getBigDecimal("max_high"));
+                    dto.setLowPrice(rs.getBigDecimal("min_low"));
+                    list.add(dto);
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        
+        return list;
     }
 }
