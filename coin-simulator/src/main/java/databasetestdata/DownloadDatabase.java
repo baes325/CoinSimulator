@@ -144,6 +144,7 @@ public class DownloadDatabase {
                     }
                     break; 
                 }
+                
             }
             
             conn.commit(); 

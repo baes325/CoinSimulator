@@ -89,6 +89,11 @@ public class MainFrame extends JFrame {
     public MainFrame(String userId) {
         super("가상화폐 모의투자 시스템");
         this.currentUserId = userId;
+        try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(1600, 900);
@@ -111,7 +116,7 @@ public class MainFrame extends JFrame {
         new Thread(() -> {
             System.out.println("[MainFrame] 백그라운드에서 캔들 데이터 동기화를 시작합니다...");
             try {
-                DownloadDatabase.updateData(1);
+                //DownloadDatabase.updateData(1);
                 System.out.println("[MainFrame] 데이터 동기화 완료!");
 
                 SwingUtilities.invokeLater(() -> {
@@ -371,11 +376,7 @@ public class MainFrame extends JFrame {
     // ════════════════════════════════════════════════
 
     public static void main(String[] args) {
-        try {
-            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+
         SwingUtilities.invokeLater(() -> new MainFrame("test_user1"));
     }
 }
