@@ -87,6 +87,11 @@ public class MainFrame extends JFrame {
     public MainFrame(String userId) {
         super("가상화폐 모의투자 시스템");
         this.currentUserId = userId;
+        try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(1600, 900);
@@ -344,11 +349,7 @@ public class MainFrame extends JFrame {
     // ════════════════════════════════════════════════
 
     public static void main(String[] args) {
-        try {
-            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+
         SwingUtilities.invokeLater(() -> new MainFrame("test_user1"));
     }
 }
