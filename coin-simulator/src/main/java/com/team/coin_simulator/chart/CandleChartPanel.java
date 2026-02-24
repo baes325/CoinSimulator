@@ -137,7 +137,8 @@ public class CandleChartPanel extends JPanel {
         domainAxis.setAutoTickUnitSelection(true);
 
         CandlestickRenderer renderer = new CandlestickRenderer();
-        renderer.setAutoWidthMethod(CandlestickRenderer.WIDTHMETHOD_SMALLEST);
+        // SMALLEST 대신 AVERAGE를 사용하여 비정상적으로 얇아지는 현상 방지
+        renderer.setAutoWidthMethod(CandlestickRenderer.WIDTHMETHOD_AVERAGE); 
         renderer.setAutoWidthGap(-0.1);
         renderer.setDrawVolume(false);
         renderer.setUpPaint(Color.RED);
@@ -264,7 +265,29 @@ public class CandleChartPanel extends JPanel {
 
         Collections.reverse(rawList);
         List<CandleDTO> resampled = resampleCandles(rawList, timeframe);
-        if (liveCandle != null) resampled.add(liveCandle);
+
+        if (liveCandle != null) {
+            if (!resampled.isEmpty()) {
+                CandleDTO lastCandle = resampled.get(resampled.size() - 1);
+                
+                // 마지막 DB 캔들과 라이브 캔들이 같은 타임프레임 구간인지 블록 계산
+                int tfMins = (timeframe == TF_1MON) ? 60 * 24 * 30 : timeframe;
+                long lastEpoch = ChronoUnit.MINUTES.between(LocalDateTime.of(1970, 1, 1, 0, 0), lastCandle.getCandleDateTimeKst());
+                long liveEpoch = ChronoUnit.MINUTES.between(LocalDateTime.of(1970, 1, 1, 0, 0), liveCandle.getCandleDateTimeKst());
+                
+                if (lastEpoch / tfMins == liveEpoch / tfMins) {
+                    // 같은 구간이면 새로 추가하지 않고 마지막 캔들의 고/저/종가만 갱신 (시간 역전 완벽 방지)
+                    lastCandle.setHighPrice(Math.max(lastCandle.getHighPrice(), liveCandle.getHighPrice()));
+                    lastCandle.setLowPrice(Math.min(lastCandle.getLowPrice(), liveCandle.getLowPrice()));
+                    lastCandle.setTradePrice(liveCandle.getTradePrice());
+                } else {
+                    // 라이브 캔들이 완전히 새로운 시간대 구간으로 넘어갔을 때만 추가
+                    resampled.add(liveCandle);
+                }
+            } else {
+                resampled.add(liveCandle);
+            }
+        }
         return buildDataset(market, resampled);
     }
 
@@ -496,10 +519,8 @@ public class CandleChartPanel extends JPanel {
     }
 
     private void finalizeLiveCandle() {
-        if (liveCandle == null) return;
-        liveCandle.setUnit(1); // 1분봉으로 저장
-        candleDAO.insertCandles(Collections.singletonList(liveCandle));
-        liveCandle = null;
+        // UI에서 DB 원본 데이터를 건드려 중복/오염시키는 로직 완전 삭제
+        liveCandle = null; 
     }
 
     private CandleDTO createNewLiveCandle(double price, LocalDateTime time) {

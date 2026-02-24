@@ -1,20 +1,41 @@
 package com.team.coin_simulator;
 
+import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
+import java.awt.FileDialog;
 import java.awt.Font;
+import java.awt.Graphics2D;
+import java.awt.Image;
+import java.awt.RenderingHints;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.geom.Ellipse2D;
+import java.awt.image.BufferedImage;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
+import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 
+import com.google.protobuf.compiler.PluginProtos.CodeGeneratorResponse.File;
 import com.team.coin_simulator.Alerts.PriceAlertService;
 import com.team.coin_simulator.Market_Order.OrderPanel;
 import com.team.coin_simulator.Market_Panel.HistoryPanel;
@@ -24,9 +45,12 @@ import com.team.coin_simulator.backtest.BacktestTimeController;
 import com.team.coin_simulator.backtest.CandleChartBacktestAdapter;
 import com.team.coin_simulator.backtest.SessionManager;
 import com.team.coin_simulator.chart.CandleChartPanel;
+import com.team.coin_simulator.login.ChangePasswordFrame;
+import com.team.coin_simulator.login.LoginFrame;
 import com.team.coin_simulator.orderbook.OrderBookPanel;
 
 import DAO.UpbitWebSocketDao;
+import DAO.UserDAO;
 import DTO.SessionDTO;
 import Investment_details.Investment_details_MainPanel;
 import databasetestdata.DownloadDatabase;
