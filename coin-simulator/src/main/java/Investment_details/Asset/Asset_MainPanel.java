@@ -29,12 +29,14 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
 
     private final AssetDAO assetDAO;
     private final String   userId;
+    private long sessionId;
 
     private List<MyAssetStatusDTO> myAssetList = new ArrayList<>();
     private BigDecimal             krwBalance  = BigDecimal.ZERO;
 
-    public Asset_MainPanel(String userId) {
-        this.userId   = userId;
+    public Asset_MainPanel(String userId, long sessionId) {
+        this.userId = userId;
+        this.sessionId = sessionId;
         this.assetDAO = new AssetDAO();
 
         setLayout(new BorderLayout(0, 0));
@@ -52,13 +54,17 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
         // 초기 DB 데이터 로드
         initAssetData();
     }
+    // 세션 ID 업데이트 메서드 추가
+    public void setSessionId(long sessionId) {
+        this.sessionId = sessionId;
+    }
 
     // ── 초기 데이터 로드 ──────────────────────────────────────────
     public void initAssetData() {
         myAssetList.clear();
         krwBalance = BigDecimal.ZERO;
 
-        List<AssetDTO> dbAssets = assetDAO.getAllAssets(userId);
+        List<AssetDTO> dbAssets = assetDAO.getAllAssets(userId, sessionId);
 
         for (AssetDTO asset : dbAssets) {
             if ("KRW".equalsIgnoreCase(asset.getCurrency())) {
@@ -82,6 +88,7 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
         refreshUI();
     }
 
+    
     // ── 웹소켓 콜백 ───────────────────────────────────────────────
     @Override
     public void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr) {
@@ -145,18 +152,18 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
     }
 
     // ── 독립 테스트 ───────────────────────────────────────────────
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            JFrame frame = new JFrame("보유자산 테스트");
-            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-            frame.setSize(1100, 700);
-            frame.setLocationRelativeTo(null);
-
-            Asset_MainPanel panel = new Asset_MainPanel("user_01");
-            frame.add(panel);
-            frame.setVisible(true);
-
-            UpbitWebSocketDao.getInstance().start();
-        });
-    }
+//    public static void main(String[] args) {
+//        SwingUtilities.invokeLater(() -> {
+//            JFrame frame = new JFrame("보유자산 테스트");
+//            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+//            frame.setSize(1100, 700);
+//            frame.setLocationRelativeTo(null);
+//
+//            Asset_MainPanel panel = new Asset_MainPanel("user_01");
+//            frame.add(panel);
+//            frame.setVisible(true);
+//
+//            UpbitWebSocketDao.getInstance().start();
+//        });
+//    }
 }

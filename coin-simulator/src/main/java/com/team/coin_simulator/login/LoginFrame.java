@@ -28,8 +28,12 @@ import javax.swing.border.LineBorder;
 import javax.swing.border.TitledBorder;
 
 import com.team.coin_simulator.MainFrame;
+// 세션 관리를 위한 import 추가
+import com.team.coin_simulator.backtest.BacktestSessionDAO;
+import com.team.coin_simulator.backtest.SessionManager;
 
 import DAO.UserDAO;
+import DTO.SessionDTO;
 import DTO.UserDTO;
 
 import java.awt.datatransfer.StringSelection;

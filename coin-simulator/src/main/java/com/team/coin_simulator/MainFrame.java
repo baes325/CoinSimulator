@@ -1,65 +1,56 @@
 package com.team.coin_simulator;
 
-import DAO.UpbitWebSocketDao;
-import DAO.UserDAO;
-import Investment_details.Investment_details_MainPanel;
+import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.Color;
+import java.awt.Cursor;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Font;
 
-import com.team.coin_simulator.Market_Panel.HistoryPanel;
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JFrame;
+import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+
+import com.team.coin_simulator.Alerts.PriceAlertService;
 import com.team.coin_simulator.Market_Order.OrderPanel;
+import com.team.coin_simulator.Market_Panel.HistoryPanel;
+import com.team.coin_simulator.backtest.BacktestSessionDialog;
+import com.team.coin_simulator.backtest.BacktestTimeControlPanel;
+import com.team.coin_simulator.backtest.BacktestTimeController;
+import com.team.coin_simulator.backtest.CandleChartBacktestAdapter;
+import com.team.coin_simulator.backtest.SessionManager;
 import com.team.coin_simulator.chart.CandleChartPanel;
 import com.team.coin_simulator.orderbook.OrderBookPanel;
-import com.team.coin_simulator.login.ChangePasswordFrame;
-import com.team.coin_simulator.login.LoginFrame;
 
-import javax.imageio.ImageIO;
-import javax.swing.*;
-import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.awt.geom.Ellipse2D;
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.time.LocalDateTime;
+import DAO.UpbitWebSocketDao;
+import DTO.SessionDTO;
+import Investment_details.Investment_details_MainPanel;
+import databasetestdata.DownloadDatabase;
 
-public class MainFrame extends JFrame implements TimeController.TimeChangeListener {
+/**
+ * 메인 프레임 - 전체 화면 전환 방식
+ *
+ * 화면 구성:
+ * 1. 거래 화면 (Trading View): 코인목록 + 차트 + 호가창 + 주문
+ * 2. 투자내역 화면 (Investment View): 보유자산/투자손익/거래내역/미결
+ *
+ * ※ TimeController / TimeControlPanel 제거 —
+ *   실시간 ↔ 백테스팅 전환은 BacktestTimeController + BacktestTimeControlPanel이 전담합니다.
+ */
+public class MainFrame extends JFrame {
 
-    // =========================
-    // UI 크기/스타일 상수
-    // =========================
-    private static final int TOP_BAR_HEIGHT = 64;     // 상단바 높이 (잘림 방지)
-    private static final int PROFILE_SIZE   = 48;     // 프로필 원 지름
-    private static final int BTN_WIDTH      = 160;
-    private static final int BTN_HEIGHT     = 44;
-
-    // =========================
-    // 로그인 유저
-    // =========================
-    private String currentUserId = "test_user1";
-    private String currentNickname;
-    private String currentProfileImagePath;
-
-    // =========================
-    // 상단 UI
-    // =========================
+    // 상단 패널
     private JPanel topPanel;
-    private TimeControlPanel timeControlPanel;
     private JButton btnToggleView;
-    private JLabel profileIconLabel;
 
-    // =========================
-    // 화면 전환
-    // =========================
+    // 메인 컨텐츠 (CardLayout)
     private CardLayout mainCardLayout;
     private JPanel mainContentPanel;
-    private boolean isTradingView = true;
 
-    private static final String CARD_TRADING = "TRADING";
-    private static final String CARD_INVESTMENT = "INVESTMENT";
-
-    // =========================
     // 거래 화면 컴포넌트
     // =========================
     private JPanel tradingPanel;
@@ -68,15 +59,31 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
     private OrderBookPanel orderBookPanel;
     private OrderPanel orderPanel;
 
-    // =========================
-    // 투자내역 화면
-    // =========================
+    // 투자내역 화면 컴포넌트
     private Investment_details_MainPanel investmentPanel;
 
-    // =========================
-    // 시간/웹소켓
-    // =========================
-    private TimeController timeController;
+    // 상태 관리
+    private String currentUserId = "test_user1";
+    private boolean isTradingView = true;
+
+    // 카드 식별자
+    private static final String CARD_TRADING   = "TRADING";
+    private static final String CARD_INVESTMENT = "INVESTMENT";
+
+    // 알림 감시자
+    private PriceAlertService alertService;
+
+    // 백테스팅 UI / 어댑터
+    private BacktestTimeControlPanel backtestControlPanel;
+    private CandleChartBacktestAdapter chartBacktestAdapter;
+
+
+    private long currentSessionId = SessionManager.getInstance().getCurrentSessionId();
+
+
+    // ════════════════════════════════════════════════
+    //  생성자
+    // ════════════════════════════════════════════════
 
     public MainFrame(String userId) {
         super("가상화폐 모의투자 시스템");
@@ -101,21 +108,54 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
 
         // 웹소켓
         initWebSocket();
-
+        alertService = new PriceAlertService(this);
         setVisible(true);
+        syncMarketDataBackground();
+    }
+
+    // ════════════════════════════════════════════════
+    //  초기화
+    // ════════════════════════════════════════════════
+
+    private void syncMarketDataBackground() {
+        new Thread(() -> {
+            System.out.println("[MainFrame] 백그라운드에서 캔들 데이터 동기화를 시작합니다...");
+            try {
+                DownloadDatabase.updateData(1);
+                System.out.println("[MainFrame] 데이터 동기화 완료!");
+
+                SwingUtilities.invokeLater(() -> {
+                    if (investmentPanel != null) {
+                        investmentPanel.setSessionId(currentSessionId);
+                        investmentPanel.refreshAll();
+                    }
+                    System.out.println("[MainFrame] UI 데이터 갱신 완료");
+                });
+            } catch (Exception e) {
+                System.err.println("[MainFrame] 데이터 동기화 중 오류 발생: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }).start();
     }
 
     private void initComponents() {
+        setLayout(new BorderLayout());
+
+        // 1. 상단 패널
         topPanel = createTopPanel();
         add(topPanel, BorderLayout.NORTH);
 
-        mainCardLayout = new CardLayout();
+        // 2. 메인 컨텐츠 영역
+        mainCardLayout   = new CardLayout();
         mainContentPanel = new JPanel(mainCardLayout);
 
-        tradingPanel = createTradingPanel();
-        investmentPanel = new Investment_details_MainPanel(currentUserId);
+        tradingPanel    = createTradingPanel();
+        investmentPanel = new Investment_details_MainPanel(currentUserId, currentSessionId);
 
-        mainContentPanel.add(tradingPanel, CARD_TRADING);
+        chartBacktestAdapter = new CandleChartBacktestAdapter(chartPanel, historyPanel);
+        BacktestTimeController.getInstance().addTickListener(chartBacktestAdapter);
+
+        mainContentPanel.add(tradingPanel,    CARD_TRADING);
         mainContentPanel.add(investmentPanel, CARD_INVESTMENT);
 
         add(mainContentPanel, BorderLayout.CENTER);
@@ -404,7 +444,7 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBackground(Color.WHITE);
 
-        historyPanel = new HistoryPanel(currentUserId);
+        historyPanel = new HistoryPanel(currentUserId, currentSessionId);
         historyPanel.setPreferredSize(new Dimension(350, 0));
         historyPanel.addCoinSelectionListener(this::onCoinSelected);
 
@@ -417,22 +457,91 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
         orderBookPanel.setPreferredSize(new Dimension(0, 350));
         orderBookPanel.setBorder(BorderFactory.createTitledBorder("호가창"));
 
-        centerArea.add(chartPanel, BorderLayout.CENTER);
+        centerArea.add(chartPanel,    BorderLayout.CENTER);
         centerArea.add(orderBookPanel, BorderLayout.SOUTH);
 
         orderPanel = new OrderPanel(currentUserId);
         orderPanel.setPreferredSize(new Dimension(350, 0));
 
-        panel.add(historyPanel, BorderLayout.WEST);
-        panel.add(centerArea, BorderLayout.CENTER);
-        panel.add(orderPanel, BorderLayout.EAST);
-
+        panel.add(historyPanel,  BorderLayout.WEST);
+        panel.add(centerArea,    BorderLayout.CENTER);
+        panel.add(orderPanel,    BorderLayout.EAST);
         return panel;
     }
 
+    // ════════════════════════════════════════════════
+    //  백테스팅 세션 다이얼로그 (BacktestTimeControlPanel에서 호출)
+    // ════════════════════════════════════════════════
+
+    public void openSessionDialog() {
+        BacktestSessionDialog dialog = new BacktestSessionDialog(this, currentUserId);
+        dialog.setVisible(true);
+
+        SessionDTO selectedSession = dialog.getSelectedSession();
+        if (selectedSession == null) return;
+
+        SessionManager.getInstance().setCurrentSession(selectedSession);
+        this.currentSessionId = selectedSession.getSessionId();
+
+        System.out.println("[MainFrame] 선택된 세션 ID: " + currentSessionId);
+
+        if (investmentPanel != null) {
+            investmentPanel.setSessionId(currentSessionId);
+            investmentPanel.refreshAll();
+        }
+        
+        if (historyPanel != null) {
+            historyPanel.setSessionId(currentSessionId);
+        }
+        if (orderPanel != null) {
+            orderPanel.setSessionId(currentSessionId);
+        }
+        
+        java.time.LocalDateTime startTime   = selectedSession.getStartSimTime().toLocalDateTime();
+        java.time.LocalDateTime currentSimTime = selectedSession.getCurrentSimTime() != null
+                ? selectedSession.getCurrentSimTime().toLocalDateTime()
+                : startTime;
+        java.time.LocalDateTime endTime = startTime.plusMonths(1);
+
+        // 실시간 WebSocket 종료 & 차트 백테스팅 시점 설정
+        UpbitWebSocketDao.getInstance().close();
+        chartPanel.loadHistoricalData(currentSimTime);
+
+        // 백테스팅 엔진 시작
+        BacktestTimeController.getInstance().startSession(
+                currentUserId, currentSessionId, startTime, currentSimTime, endTime);
+
+        if (backtestControlPanel != null) {
+            backtestControlPanel.activateSessionUI(selectedSession);
+        }
+    }
+
+    /**
+     * 백테스팅 → 실시간 복귀 시 BacktestTimeControlPanel이 호출합니다.
+     * (구 TimeController.switchToRealtimeMode() 역할)
+     */
+    public void returnToRealtimeMode() {
+        SwingUtilities.invokeLater(() -> {
+            System.out.println("[MainFrame] 실시간 모드로 전환됨");
+            this.currentSessionId = 1L;
+            
+            if (investmentPanel != null) investmentPanel.setSessionId(1L);
+            if (historyPanel != null) historyPanel.setSessionId(1L);
+            //백->실시간 돌아올 때
+            if (orderPanel != null) {
+                orderPanel.setSessionId(1L); 
+            }
+            chartPanel.resetToRealtimeMode();
+            UpbitWebSocketDao.getInstance().start();
+        });
+    }
+
+    // ════════════════════════════════════════════════
+    //  화면 전환 / 이벤트 핸들러
+    // ════════════════════════════════════════════════
+
     private void toggleView() {
         isTradingView = !isTradingView;
-
         if (isTradingView) {
             mainCardLayout.show(mainContentPanel, CARD_TRADING);
             btnToggleView.setText("투자내역 보기");
@@ -447,6 +556,7 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
 
     private void onCoinSelected(String coinSymbol) {
         if (coinSymbol == null || coinSymbol.isEmpty()) return;
+        System.out.println("[MainFrame] 코인 선택됨: " + coinSymbol);
 
         chartPanel.changeMarket(coinSymbol);
         updateOrderBookPanel(coinSymbol);
@@ -457,66 +567,45 @@ public class MainFrame extends JFrame implements TimeController.TimeChangeListen
     }
 
     private void updateOrderBookPanel(String coinSymbol) {
-        if (orderBookPanel != null) {
-            orderBookPanel.closeConnection();
-        }
+        if (orderBookPanel != null) orderBookPanel.closeConnection();
 
         orderBookPanel = new OrderBookPanel(coinSymbol);
         orderBookPanel.setPreferredSize(new Dimension(0, 350));
         orderBookPanel.setBorder(BorderFactory.createTitledBorder(coinSymbol + " 호가창"));
 
-        JPanel centerArea = (JPanel) tradingPanel.getComponent(1);
+        JPanel centerArea = (JPanel) ((JPanel) tradingPanel.getComponent(1));
         centerArea.remove(1);
         centerArea.add(orderBookPanel, BorderLayout.SOUTH);
-
         centerArea.revalidate();
         centerArea.repaint();
     }
 
-    // =========================
-    // 웹소켓/타임 변경
-    // =========================
+    // ════════════════════════════════════════════════
+    //  WebSocket / 리소스
+    // ════════════════════════════════════════════════
+
     private void initWebSocket() {
-        if (timeController.isRealtimeMode()) {
-            UpbitWebSocketDao.getInstance().start();
-        }
-    }
-
-    @Override
-    public void onTimeChanged(LocalDateTime newTime, boolean isRealtime) {
-        SwingUtilities.invokeLater(() -> {
-            if (isRealtime) {
-                UpbitWebSocketDao.getInstance().start();
-            } else {
-                UpbitWebSocketDao.getInstance().close();
-                loadHistoricalData(newTime);
-            }
-        });
-    }
-
-    private void loadHistoricalData(LocalDateTime targetTime) {
-        chartPanel.loadHistoricalData(targetTime);
+        UpbitWebSocketDao.getInstance().start();
     }
 
     @Override
     public void dispose() {
-        try {
-            UpbitWebSocketDao.getInstance().close();
-        } catch (Exception ignore) {}
-
-        try {
-            if (orderBookPanel != null) orderBookPanel.closeConnection();
-        } catch (Exception ignore) {}
-
-        try {
-            DBConnection.close();
-        } catch (Exception ignore) {}
-
+        UpbitWebSocketDao.getInstance().close();
+        if (orderBookPanel != null) orderBookPanel.closeConnection();
+        DBConnection.close();
         super.dispose();
     }
 
-    // 테스트용 main (실제 실행은 LoginFrame.main 사용 추천)
+    // ════════════════════════════════════════════════
+    //  진입점
+    // ════════════════════════════════════════════════
+
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> new MainFrame("test@onbit.com"));
+        try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        SwingUtilities.invokeLater(() -> new MainFrame("test_user1"));
     }
 }
