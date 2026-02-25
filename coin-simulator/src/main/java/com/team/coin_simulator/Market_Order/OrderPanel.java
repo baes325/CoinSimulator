@@ -19,6 +19,9 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
     private AssetDAO assetDAO = new AssetDAO(); // 💡 진짜 자산을 불러올 DAO 추가
     private OpenOrderDAO openOrderDAO = new OpenOrderDAO();
     
+ // OrderPanel 필드
+    private java.util.concurrent.ScheduledExecutorService scheduler;
+    
     // 💡 가짜(mock) 데이터 삭제하고, DB에서 불러온 진짜 잔고를 담을 맵
     private Map<String, BigDecimal> realBalance = new HashMap<>();
     private Map<String, BigDecimal> realLocked = new HashMap<>();
@@ -176,6 +179,25 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         refreshDBData();
     }
     
+ // 자동체결 시작할 때 (예: 생성자/초기화에서)
+    private void startAutoExecution() {
+        scheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "AutoExecutionThread");
+            t.setDaemon(true);
+            return t;
+        });
+
+        scheduler.scheduleAtFixedRate(() -> {
+            try {
+                // 기존에 하던 자동체결 로직 호출
+                // OrderDAO.checkAndExecuteLimitOrders(...);
+            } catch (Exception e) {
+                // 로그만
+                System.out.println(">> [자동 체결 오류] " + e.getMessage());
+            }
+        }, 0, 2, java.util.concurrent.TimeUnit.SECONDS); // 주기는 너 기존에 맞춰
+    }
+    
     // 💡 [핵심] DB와 동기화하는 메서드 (가짜 데이터 대신 진짜 데이터를 읽어옴)
     private void refreshDBData() {
         realBalance.clear();
@@ -212,6 +234,15 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         });
     }
 
+ // ✅ MainFrame이 호출할 종료 메서드
+    public void shutdown() {
+        try {
+            if (scheduler != null && !scheduler.isShutdown()) {
+                scheduler.shutdownNow();
+            }
+        } catch (Exception ignored) {}
+    }
+    
     public void setSelectedCoin(String coinSymbol) {
         this.selectedCoinCode = coinSymbol;
         String krName = CoinConfig.COIN_INFO.getOrDefault(coinSymbol, coinSymbol);

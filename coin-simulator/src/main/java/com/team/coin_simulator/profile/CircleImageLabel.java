@@ -19,20 +19,23 @@ public class CircleImageLabel extends JLabel {
     public void setImagePath(String path) {
         if (path == null || path.isBlank()) {
             image = null;
+            System.out.println("[CircleImageLabel] path is null/blank");
+            revalidate();
             repaint();
             return;
         }
 
         try {
-            File f = new File(path);
-            System.out.println("[CircleImageLabel] load path=" + path + " exists=" + f.exists());
+            java.io.File f = new java.io.File(path);
+            System.out.println("[CircleImageLabel] load path=" + path + " exists=" + f.exists() + " size=" + (f.exists() ? f.length() : -1));
 
             java.awt.image.BufferedImage bi = javax.imageio.ImageIO.read(f);
             if (bi == null) {
-                System.out.println("[CircleImageLabel] ImageIO.read returned null (unsupported/failed)");
+                System.out.println("[CircleImageLabel] ImageIO.read returned null (unsupported format or read fail)");
                 image = null;
             } else {
-                image = bi.getScaledInstance(size, size, Image.SCALE_SMOOTH);
+                image = bi.getScaledInstance(size, size, java.awt.Image.SCALE_SMOOTH);
+                System.out.println("[CircleImageLabel] image loaded OK");
             }
         } catch (Exception e) {
             System.out.println("[CircleImageLabel] load failed: " + e.getMessage());

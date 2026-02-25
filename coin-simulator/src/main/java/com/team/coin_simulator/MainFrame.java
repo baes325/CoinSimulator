@@ -61,6 +61,10 @@ public class MainFrame extends JFrame {
     // 투자내역 화면 컴포넌트
     private Investment_details_MainPanel investmentPanel;
 
+ // --- MainFrame 필드에 추가 ---
+    private volatile boolean shuttingDown = false;
+    private Thread marketSyncThread;
+    
     // 상태 관리
     private String currentUserId = "test_user1";
     private boolean isTradingView = true;
@@ -113,26 +117,38 @@ public class MainFrame extends JFrame {
     // ════════════════════════════════════════════════
 
     private void syncMarketDataBackground() {
-        new Thread(() -> {
+        marketSyncThread = new Thread(() -> {
             System.out.println("[MainFrame] 백그라운드에서 캔들 데이터 동기화를 시작합니다...");
             try {
-                //DownloadDatabase.updateData(1);
+                // 로그아웃/종료 중이면 실행 안 함
+                if (shuttingDown || Thread.currentThread().isInterrupted()) return;
+
+                if (shuttingDown || Thread.currentThread().isInterrupted()) return;
+
                 System.out.println("[MainFrame] 데이터 동기화 완료!");
 
                 SwingUtilities.invokeLater(() -> {
+                    // ✅ 이미 로그아웃/종료면 UI 접근 금지
+                    if (shuttingDown) return;
+
                     if (investmentPanel != null) {
                         investmentPanel.setSessionId(currentSessionId);
                         investmentPanel.refreshAll();
                     }
                     System.out.println("[MainFrame] UI 데이터 갱신 완료");
                 });
-            } catch (Exception e) {
-                System.err.println("[MainFrame] 데이터 동기화 중 오류 발생: " + e.getMessage());
-                e.printStackTrace();
-            }
-        }).start();
-    }
 
+            } catch (Exception e) {
+                if (!shuttingDown) {
+                    System.err.println("[MainFrame] 데이터 동기화 중 오류 발생: " + e.getMessage());
+                    e.printStackTrace();
+                }
+            }
+        }, "MarketSyncThread");
+
+        marketSyncThread.setDaemon(true); // 앱 종료에 방해 안 되게
+        marketSyncThread.start();
+    }
     private void initComponents() {
         setLayout(new BorderLayout());
 
@@ -310,6 +326,22 @@ public class MainFrame extends JFrame {
     //  화면 전환 / 이벤트 핸들러
     // ════════════════════════════════════════════════
 
+    private void shutdownBackgroundTasks() {
+        shuttingDown = true;
+
+        // 1) WebSocket 종료
+        try { UpbitWebSocketDao.getInstance().close(); } catch (Exception ignored) {}
+
+        // 2) 호가창 연결 종료
+        try { if (orderBookPanel != null) orderBookPanel.closeConnection(); } catch (Exception ignored) {}
+
+        // 3) 주문패널(자동체결/타이머) 종료 훅 (아래 2번에서 OrderPanel에 메서드 추가할거임)
+        try { if (orderPanel != null) orderPanel.shutdown(); } catch (Exception ignored) {}
+
+        // 4) 마켓 동기화 스레드 interrupt
+        try { if (marketSyncThread != null) marketSyncThread.interrupt(); } catch (Exception ignored) {}
+    }
+    
     private void toggleView() {
         isTradingView = !isTradingView;
         if (isTradingView) {
@@ -365,9 +397,9 @@ public class MainFrame extends JFrame {
 
     @Override
     public void dispose() {
-        UpbitWebSocketDao.getInstance().close();
-        if (orderBookPanel != null) orderBookPanel.closeConnection();
-        DBConnection.close();
+        shutdownBackgroundTasks();
+
+        // ❌ 여기서 DBConnection.close() 절대 호출하지마 (로그아웃도 dispose 되니까)
         super.dispose();
     }
 
@@ -376,6 +408,15 @@ public class MainFrame extends JFrame {
     // ════════════════════════════════════════════════
 
     public static void main(String[] args) {
+
+        // ✅ 프로그램 완전 종료시에만 DB 풀 닫기
+        Runtime.getRuntime().addShutdownHook(new Thread(DBConnection::close));
+
+        try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
         SwingUtilities.invokeLater(() -> new MainFrame("test_user1"));
     }
