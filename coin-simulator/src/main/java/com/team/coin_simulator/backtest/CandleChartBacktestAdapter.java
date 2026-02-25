@@ -1,6 +1,7 @@
 package com.team.coin_simulator.backtest;
 
 import com.team.coin_simulator.chart.CandleChartPanel;
+import com.team.coin_simulator.Market_Order.OrderPanel;
 import javax.swing.*;
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -10,6 +11,7 @@ public class CandleChartBacktestAdapter implements BacktestTimeController.Backte
 
     private final CandleChartPanel chartPanel;
     private final com.team.coin_simulator.Market_Panel.HistoryPanel historyPanel;
+    private final OrderPanel orderPanel;
     private final DAO.HistoricalDataDAO historicalDataDAO = new DAO.HistoricalDataDAO();
 
     private LocalDateTime lastChartUpdateTime  = null;
@@ -21,9 +23,12 @@ public class CandleChartBacktestAdapter implements BacktestTimeController.Backte
     
     private LocalDateTime currentAccDay = null; // 오전 9시 기준 현재 날짜
 
-    public CandleChartBacktestAdapter(CandleChartPanel chartPanel, com.team.coin_simulator.Market_Panel.HistoryPanel historyPanel) {
-        this.chartPanel   = chartPanel;
-        this.historyPanel = historyPanel;
+    public CandleChartBacktestAdapter(CandleChartPanel chartPanel, 
+            com.team.coin_simulator.Market_Panel.HistoryPanel historyPanel,
+            OrderPanel orderPanel) { 
+		this.chartPanel   = chartPanel;
+		this.historyPanel = historyPanel;
+		this.orderPanel   = orderPanel;
     }
 
     @Override
@@ -114,6 +119,9 @@ public class CandleChartBacktestAdapter implements BacktestTimeController.Backte
                         }
 
                         historyPanel.updateCoinPrice(symbol, priceStr, flucStr, accPrStr);
+                        if (orderPanel != null) {
+                            orderPanel.onTickerUpdate(symbol, priceStr, flucStr, accPrStr, "15.0");
+                        }
                     }
                 });
             } catch (Exception e) {

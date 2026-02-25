@@ -163,7 +163,7 @@ public class MainFrame extends JFrame {
         tradingPanel    = createTradingPanel();
         investmentPanel = new Investment_details_MainPanel(currentUserId, currentSessionId);
 
-        chartBacktestAdapter = new CandleChartBacktestAdapter(chartPanel, historyPanel);
+        chartBacktestAdapter = new CandleChartBacktestAdapter(chartPanel, historyPanel, orderPanel);
         BacktestTimeController.getInstance().addTickListener(chartBacktestAdapter);
 
         mainContentPanel.add(tradingPanel,    CARD_TRADING);
@@ -246,7 +246,7 @@ public class MainFrame extends JFrame {
         centerArea.add(chartPanel,    BorderLayout.CENTER);
         centerArea.add(orderBookPanel, BorderLayout.SOUTH);
 
-        orderPanel = new OrderPanel(currentUserId);
+        orderPanel = new OrderPanel(currentUserId, false);
         orderPanel.setPreferredSize(new Dimension(350, 0));
 
         panel.add(historyPanel,  BorderLayout.WEST);

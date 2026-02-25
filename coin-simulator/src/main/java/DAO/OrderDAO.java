@@ -318,7 +318,7 @@ public class OrderDAO {
      * 실제 거래소의 체결 원칙 (가격 우선 -> 시간 우선)을 엄격하게 적용하여
      * 현재 시세와 교차(Cross)되는 주문을 찾아 체결시킵니다.
      */
-public List<OrderDTO> checkAndExecuteLimitOrders(String market, BigDecimal currentRealPrice, BigDecimal currentTradeVolume) {
+public List<OrderDTO> checkAndExecuteLimitOrders(String market, BigDecimal currentRealPrice, BigDecimal currentTradeVolume, long sessionId) {
         
         if (!market.startsWith("KRW-")) {
             market = "KRW-" + market;
@@ -327,35 +327,35 @@ public List<OrderDTO> checkAndExecuteLimitOrders(String market, BigDecimal curre
         List<OrderDTO> executedList = new ArrayList<>();
         Connection conn = null;
         
-        // 매수/매도 쿼리 (가장 비싸게/싸게 부른 사람 + 먼저 주문한 사람 순서)
-        String bidSql = "SELECT * FROM orders WHERE market = ? AND status = 'WAIT' AND side = 'BID' AND original_price >= ? ORDER BY original_price DESC, order_id ASC";
-        String askSql = "SELECT * FROM orders WHERE market = ? AND status = 'WAIT' AND side = 'ASK' AND original_price <= ? ORDER BY original_price ASC, order_id ASC";
+        // SQL 쿼리에 session_id = ? 조건을 반드시 추가!
+        String bidSql = "SELECT * FROM orders WHERE market = ? AND session_id = ? AND status = 'WAIT' AND side = 'BID' AND original_price >= ? ORDER BY original_price DESC, order_id ASC";
+        String askSql = "SELECT * FROM orders WHERE market = ? AND session_id = ? AND status = 'WAIT' AND side = 'ASK' AND original_price <= ? ORDER BY original_price ASC, order_id ASC";
 
         try {
             conn = DBConnection.getConnection();
             conn.setAutoCommit(false);
 
-            // 💡 시장에 풀린 물량을 저장해둡니다. (이 물량이 바닥날 때까지 순서대로 나눠줍니다!)
             BigDecimal availableVolumeForBid = currentTradeVolume;
             BigDecimal availableVolumeForAsk = currentTradeVolume;
 
-            // [1단계] 매수(BID) 부분 체결 처리
+            // [1단계] 매수(BID)
             try (PreparedStatement bidPstmt = conn.prepareStatement(bidSql)) {
                 bidPstmt.setString(1, market);
-                bidPstmt.setBigDecimal(2, currentRealPrice);
+                bidPstmt.setLong(2, sessionId); // 💡 세션 ID 세팅
+                bidPstmt.setBigDecimal(3, currentRealPrice);
                 try (ResultSet rs = bidPstmt.executeQuery()) {
                     while (rs.next() && availableVolumeForBid.compareTo(BigDecimal.ZERO) > 0) {
                         OrderDTO order = mapResultSetToOrderDTO(rs);
-                        // 체결 후 남은 시장 물량을 다시 업데이트 받습니다.
                         availableVolumeForBid = processPartialExecution(conn, order, executedList, market, "BID", availableVolumeForBid);
                     }
                 }
             }
 
-            // [2단계] 매도(ASK) 부분 체결 처리
+            // [2단계] 매도(ASK)
             try (PreparedStatement askPstmt = conn.prepareStatement(askSql)) {
                 askPstmt.setString(1, market);
-                askPstmt.setBigDecimal(2, currentRealPrice);
+                askPstmt.setLong(2, sessionId); // 💡 세션 ID 세팅
+                askPstmt.setBigDecimal(3, currentRealPrice);
                 try (ResultSet rs = askPstmt.executeQuery()) {
                     while (rs.next() && availableVolumeForAsk.compareTo(BigDecimal.ZERO) > 0) {
                         OrderDTO order = mapResultSetToOrderDTO(rs);
@@ -386,9 +386,10 @@ public List<OrderDTO> checkAndExecuteLimitOrders(String market, BigDecimal curre
 
         // 2. 주문 상태 업데이트 (🔥 동시성 제어 + 부분 체결 계산 로직)
         // 남은 수량에서 방금 체결한 만큼 빼고, 만약 그 결과가 0 이하면 'DONE', 아니면 여전히 'WAIT' 유지
-        String updateOrderSql = "UPDATE orders SET remaining_volume = remaining_volume - ?, " +
-                                "status = CASE WHEN remaining_volume - ? <= 0 THEN 'DONE' ELSE 'WAIT' END " +
-                                "WHERE order_id = ? AND status = 'WAIT' AND remaining_volume >= ?";
+        String updateOrderSql = "UPDATE orders SET " +
+                "status = CASE WHEN remaining_volume - ? <= 0 THEN 'DONE' ELSE 'WAIT' END, " +
+                "remaining_volume = remaining_volume - ? " +
+                "WHERE order_id = ? AND status = 'WAIT' AND remaining_volume >= ?";
         
         try (PreparedStatement updateStmt = conn.prepareStatement(updateOrderSql)) {
             updateStmt.setBigDecimal(1, executeVol);
