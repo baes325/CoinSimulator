@@ -93,6 +93,11 @@ public class MainFrame extends JFrame {
     public MainFrame(String userId) {
         super("가상화폐 모의투자 시스템");
         this.currentUserId = userId;
+        try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(1600, 900);
@@ -117,8 +122,6 @@ public class MainFrame extends JFrame {
             try {
                 // 로그아웃/종료 중이면 실행 안 함
                 if (shuttingDown || Thread.currentThread().isInterrupted()) return;
-
-                DownloadDatabase.updateData(1);
 
                 if (shuttingDown || Thread.currentThread().isInterrupted()) return;
 
