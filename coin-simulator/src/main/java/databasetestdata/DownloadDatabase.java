@@ -10,9 +10,6 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -344,22 +341,10 @@ public class DownloadDatabase {
     
     
     public static void main(String[] args) {
-    	ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-        System.out.println("database 백그라운드에서 캔들 데이터 동기화를 시작합니다...");
-        
-	        Runnable syncTask = () -> {
-	            try {
-	                // 1분 간격으로 실행될 가상화폐 데이터 동기화 로직
-	                DownloadDatabase.updateData(1);
-	                System.out.println("[MainFrame] 데이터 동기화 완료! (1분 주기 정상 작동)");
-	            } catch (Exception e) {
-	                // 예외를 반드시 잡아 스케줄러 중단을 방지
-	                System.err.println("[MainFrame] 데이터 동기화 중 오류 발생: " + e.getMessage());
-	                e.printStackTrace();
-	            }
-	        };
-	        scheduler.scheduleAtFixedRate(syncTask, 0, 1, TimeUnit.MINUTES);
-        }
-    
-    
+        // DB 연결 확인 (필요 시 initDatabase)
+    	System.out.println(">>> 데이터 수집 프로세스 시작 <<<");
+        // 6개월 치 데이터 수집 실행
+        // unit: 1(1분), 60(1시간), 240(4시간) 권장
+        importData(1); 
+    }
 }
