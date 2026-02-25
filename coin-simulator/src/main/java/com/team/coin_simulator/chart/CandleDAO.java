@@ -7,43 +7,43 @@ import java.util.List;
 
 public class CandleDAO {
 
-    // 1. 대량의 캔들 데이터 저장 (Batch Insert)
-    // 업비트 API 등에서 받아온 많은 데이터를 한 번에 넣을 때 사용합니다.
-    public void insertCandles(List<CandleDTO> candleList) {
-        String sql = "INSERT INTO candles (market, candle_date_time_kst, candle_date_time_utc, " +
-                     "opening_price, high_price, low_price, trade_price, timestamp, " +
-                     "candle_acc_trade_price, candle_acc_trade_volume, unit) " +
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
-        try (Connection conn = DBConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            
-            conn.setAutoCommit(false); // 트랜잭션 수동 제어 (성능 향상)
-
-            for (CandleDTO candle : candleList) {
-                pstmt.setString(1, candle.getMarket());
-                pstmt.setTimestamp(2, Timestamp.valueOf(candle.getCandleDateTimeKst()));
-                pstmt.setTimestamp(3, Timestamp.valueOf(candle.getCandleDateTimeUtc()));
-                pstmt.setDouble(4, candle.getOpeningPrice());
-                pstmt.setDouble(5, candle.getHighPrice());
-                pstmt.setDouble(6, candle.getLowPrice());
-                pstmt.setDouble(7, candle.getTradePrice());
-                pstmt.setLong(8, candle.getTimestamp());
-                pstmt.setDouble(9, candle.getCandleAccTradePrice());
-                pstmt.setDouble(10, candle.getCandleAccTradeVolume());
-                pstmt.setInt(11, candle.getUnit());
-                
-                pstmt.addBatch(); // 배치에 추가
-            }
-
-            pstmt.executeBatch(); // 일괄 실행
-            conn.commit();        // 성공 시 커밋
-            
-        } catch (SQLException e) {
-            e.printStackTrace();
-            // 실패 시 롤백 로직 필요 (선택사항)
-        }
-    }
+//    // 1. 대량의 캔들 데이터 저장 (Batch Insert)
+//    // 업비트 API 등에서 받아온 많은 데이터를 한 번에 넣을 때 사용합니다.
+//    public void insertCandles(List<CandleDTO> candleList) {
+//        String sql = "INSERT INTO candles (market, candle_date_time_kst, candle_date_time_utc, " +
+//                     "opening_price, high_price, low_price, trade_price, timestamp, " +
+//                     "candle_acc_trade_price, candle_acc_trade_volume, unit) " +
+//                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+//
+//        try (Connection conn = DBConnection.getConnection();
+//             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+//            
+//            conn.setAutoCommit(false); // 트랜잭션 수동 제어 (성능 향상)
+//
+//            for (CandleDTO candle : candleList) {
+//                pstmt.setString(1, candle.getMarket());
+//                pstmt.setTimestamp(2, Timestamp.valueOf(candle.getCandleDateTimeKst()));
+//                pstmt.setTimestamp(3, Timestamp.valueOf(candle.getCandleDateTimeUtc()));
+//                pstmt.setDouble(4, candle.getOpeningPrice());
+//                pstmt.setDouble(5, candle.getHighPrice());
+//                pstmt.setDouble(6, candle.getLowPrice());
+//                pstmt.setDouble(7, candle.getTradePrice());
+//                pstmt.setLong(8, candle.getTimestamp());
+//                pstmt.setDouble(9, candle.getCandleAccTradePrice());
+//                pstmt.setDouble(10, candle.getCandleAccTradeVolume());
+//                pstmt.setInt(11, candle.getUnit());
+//                
+//                pstmt.addBatch(); // 배치에 추가
+//            }
+//
+//            pstmt.executeBatch(); // 일괄 실행
+//            conn.commit();        // 성공 시 커밋
+//            
+//        } catch (SQLException e) {
+//            e.printStackTrace();
+//            // 실패 시 롤백 로직 필요 (선택사항)
+//        }
+//    }
 
     // 2. 특정 종목의 캔들 데이터 조회 (최신순)
     public List<CandleDTO> getCandles(String market, int unit, int limit) {
@@ -119,4 +119,5 @@ public class CandleDAO {
         }
         return list;
     }
+    
 }
