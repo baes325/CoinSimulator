@@ -137,7 +137,7 @@ public class OrderDAO {
         }
     }
 
-    //주문 정정 처리
+  //주문 정정 처리
     public boolean modifyOrder(long orderId, String userId, String side, BigDecimal oldAmount, BigDecimal newAmount, BigDecimal newPrice, BigDecimal newQty) {
         Connection conn = null;
         try {
@@ -163,22 +163,24 @@ public class OrderDAO {
             BigDecimal diff = oldAmount.subtract(newAmount); 
             String currency = side.equals("BID") ? "KRW" : market.replace("KRW-", "");
 
-            // [2] 자산 변경 (차액만큼 알아서 더하고 빼기)
-            String updateAssetSql = "UPDATE assets SET balance = balance + ?, locked = locked - ? WHERE user_id = ? AND session_id = ? AND currency = ?";
-            try (PreparedStatement pstmt = conn.prepareStatement(updateAssetSql)) {
-                pstmt.setBigDecimal(1, diff);
-                pstmt.setBigDecimal(2, diff); 
-                pstmt.setString(3, userId);
-                pstmt.setLong(4, sessionId);
-                pstmt.setString(5, currency);
-                
-                // 💡 [핵심 수정] 0건 업데이트 방어
-                if (pstmt.executeUpdate() == 0) {
-                    throw new SQLException("정정할 자산 계좌를 찾지 못했습니다.");
+            // [2] 자산 변경 (차액이 0원이 아닐 때만 실행!)
+            if (diff.compareTo(BigDecimal.ZERO) != 0) {
+                String updateAssetSql = "UPDATE assets SET balance = balance + ?, locked = locked - ? WHERE user_id = ? AND session_id = ? AND currency = ?";
+                try (PreparedStatement pstmt = conn.prepareStatement(updateAssetSql)) {
+                    pstmt.setBigDecimal(1, diff);
+                    pstmt.setBigDecimal(2, diff); 
+                    pstmt.setString(3, userId);
+                    pstmt.setLong(4, sessionId);
+                    pstmt.setString(5, currency);
+                    
+                    // 0건 업데이트 방어
+                    if (pstmt.executeUpdate() == 0) {
+                        throw new SQLException("정정할 자산 계좌를 찾지 못했습니다.");
+                    }
                 }
-            }
+            } // 💡 [핵심] 여기에 if문을 닫는 중괄호가 꼭 있어야 합니다!
 
-            // [3] 주문 정보 수정
+            // [3] 주문 정보 수정 (차액이 0원이든 아니든 무조건 실행되어야 함)
             String updateOrderSql = "UPDATE orders SET original_price = ?, original_volume = ?, remaining_volume = ? WHERE order_id = ? AND user_id = ?";
             try (PreparedStatement pstmt = conn.prepareStatement(updateOrderSql)) {
                 pstmt.setBigDecimal(1, newPrice);
@@ -197,6 +199,7 @@ public class OrderDAO {
             conn.commit();
             System.out.println(">> [DB] 주문 정정 완료");
             return true;
+            
         } catch (SQLException e) {
             if (conn != null) try { conn.rollback(); } catch(SQLException ex) {}
             e.printStackTrace();

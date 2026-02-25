@@ -96,6 +96,11 @@ public class MainFrame extends JFrame {
     public MainFrame(String userId) {
         super("가상화폐 모의투자 시스템");
         this.currentUserId = userId;
+        
+        com.team.coin_simulator.backtest.BacktestSessionDAO sessionDAO = new com.team.coin_simulator.backtest.BacktestSessionDAO();
+        DTO.SessionDTO realtimeSession = sessionDAO.getOrCreateRealtimeSession(this.currentUserId);
+        com.team.coin_simulator.backtest.SessionManager.getInstance().setCurrentSession(realtimeSession);
+        
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception e) {
@@ -318,14 +323,26 @@ public class MainFrame extends JFrame {
     public void returnToRealtimeMode() {
         SwingUtilities.invokeLater(() -> {
             System.out.println("[MainFrame] 실시간 모드로 전환됨");
-            this.currentSessionId = 1L;
             
-            if (investmentPanel != null) investmentPanel.setSessionId(1L);
-            if (historyPanel != null) historyPanel.setSessionId(1L);
-            //백->실시간 돌아올 때
+            // 1.SessionManager에게 "실시간 세션으로 돌아왔다!"고 확실히 알려줍니다.
+            com.team.coin_simulator.backtest.BacktestSessionDAO sessionDAO = new com.team.coin_simulator.backtest.BacktestSessionDAO();
+            DTO.SessionDTO realtimeSession = sessionDAO.getOrCreateRealtimeSession(this.currentUserId);
+            com.team.coin_simulator.backtest.SessionManager.getInstance().setCurrentSession(realtimeSession);
+            
+            // DB에서 가져온 진짜 실시간 세션 ID (보통 1L이 맞지만, 더 안전한 방식)
+            long realSessionId = realtimeSession.getSessionId();
+            this.currentSessionId = realSessionId;
+            
+            // 2. 각 패널들에게 실시간 모드로 돌아왔으니 새로고침(refresh) 하라고 지시
+            if (investmentPanel != null) investmentPanel.setSessionId(realSessionId);
+            if (historyPanel != null) historyPanel.setSessionId(realSessionId);
+            
             if (orderPanel != null) {
-                orderPanel.setSessionId(1L); 
+                // OrderPanel은 이 메서드가 호출되면 SessionManager를 확인하고 실시간 잔고를 가져옵니다!
+                orderPanel.setSessionId(realSessionId); 
             }
+            
+            // 3. 차트 실시간 복귀 및 업비트 웹소켓 다시 연결
             chartPanel.resetToRealtimeMode();
             
             //추가: 호가창을 실시간 모드로 복귀

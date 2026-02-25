@@ -224,8 +224,7 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
         }
         System.out.println("-----------------------------------\n");
         
-        // 🚀 [수정] this.sessionId -> getSessionId()
-        openOrders = openOrderDAO.getOpenOrders(this.userId, getSessionId());
+        openOrders = orderDAO.getOpenOrders(this.userId, getSessionId());
         
         orderCoinMap.clear();
         for (OrderDTO o : openOrders) {
