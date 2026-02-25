@@ -18,9 +18,9 @@ public class OrderDAO {
                                 "VALUES (?, ?, ?, ?, ?, 'LIMIT', ?, ?, ?, 'WAIT')";
         
         // 지정가 주문 시 자산을 미리 묶어둠(Locked)
-        String lockAssetSql = "INSERT INTO assets (user_id, session_id, currency, balance, locked) VALUES (?, ?, ?, ?, ?) " +
-                              "ON DUPLICATE KEY UPDATE balance = balance - ?, locked = locked + ?";
-
+        String lockAssetSql = "UPDATE assets SET balance = balance - ?, locked = locked + ? " +
+                "WHERE user_id = ? AND session_id = ? AND currency = ? AND balance >= ?";
+        
         Connection conn = null;
         try {
             conn = DBConnection.getConnection();
@@ -51,14 +51,17 @@ public class OrderDAO {
             }
             
             try (PreparedStatement pstmt = conn.prepareStatement(lockAssetSql)) {
-                pstmt.setString(1, order.getUserId());
-                pstmt.setLong(2, order.getSessionId());
-                pstmt.setString(3, currency);
-                pstmt.setBigDecimal(4, requiredAmt.negate());
-                pstmt.setBigDecimal(5, requiredAmt);
-                pstmt.setBigDecimal(6, requiredAmt); // update 차감용
-                pstmt.setBigDecimal(7, requiredAmt); // update 증가용
-                pstmt.executeUpdate();
+                pstmt.setBigDecimal(1, requiredAmt); // balance - ?
+                pstmt.setBigDecimal(2, requiredAmt); // locked + ?
+                pstmt.setString(3, order.getUserId()); // user_id = ?
+                pstmt.setLong(4, order.getSessionId()); // session_id = ?
+                pstmt.setString(5, currency); // currency = ?
+                pstmt.setBigDecimal(6, requiredAmt); // balance >= ? (잔고 검사!)
+                
+                //만약 잔고가 부족해서 업데이트가 안 됐다면 튕겨내기
+                if (pstmt.executeUpdate() == 0) {
+                    throw new SQLException("잔고 부족");
+                }
             }
             
             conn.commit(); //모든 작업이 성공해야 실제 DB에 기록됨

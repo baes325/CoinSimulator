@@ -373,10 +373,18 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
         try {
             BigDecimal price = new BigDecimal(priceField.getText().replace(",", "").trim());
             BigDecimal qty = new BigDecimal(qtyField.getText().replace(",", "").trim());
-            BigDecimal requiredAmount = (sideIdx == 0) ? price.multiply(qty) : qty;
+            BigDecimal requiredAmount;
+            if (sideIdx == 0) { // 매수
+                BigDecimal cost = price.multiply(qty);
+                BigDecimal fee = cost.multiply(new BigDecimal("0.0005"));
+                requiredAmount = cost.add(fee);
+            } else { // 매도
+                requiredAmount = qty;
+            }
+            
             String currency = (sideIdx == 0) ? "KRW" : selectedCoinCode;
             
-            // 💡 진짜 잔고로 결제 여부 검사
+            //진짜 잔고로 결제 여부 검사
             BigDecimal balance = realBalance.getOrDefault(currency, BigDecimal.ZERO);
 
             if (balance.compareTo(requiredAmount) < 0) {
@@ -405,9 +413,17 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
         try {
             BigDecimal inputVal = new BigDecimal(marketAmountField.getText().replace(",", "").trim());
 
-            if (sideIdx == 0) { 
+            if (sideIdx == 0) { // 🔵 [시장가 매수]
                 BigDecimal krwBal = realBalance.getOrDefault("KRW", BigDecimal.ZERO);
-                if (krwBal.compareTo(inputVal) < 0) throw new RuntimeException("KRW 잔고가 부족합니다.");
+                
+                // 🚀 [수정] 수수료(0.05%)를 포함한 총 필요 금액 계산!
+                BigDecimal fee = inputVal.multiply(new BigDecimal("0.0005"));
+                BigDecimal totalRequired = inputVal.add(fee);
+                
+                // 🚀 [수정] 원금 + 수수료를 합친 금액보다 잔고가 적으면 차단!
+                if (krwBal.compareTo(totalRequired) < 0) {
+                    throw new RuntimeException("KRW 잔고가 부족합니다. (수수료 포함)");
+                }
                 
                 BigDecimal buyQty = OrderCalc.calculateMarketBuyQuantity(inputVal, currentSelectedPrice);
                 OrderDTO marketOrder = new OrderDTO(); 
@@ -422,8 +438,11 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
                     com.team.coin_simulator.Alerts.NotificationUtil.showToast((JFrame) SwingUtilities.getWindowAncestor(this), String.format("[체결] %s 시장가 매수 완료 (%.8f개)", selectedCoinCode, buyQty));
                     refreshDBData(); // 💡 DB 동기화
                 } else throw new RuntimeException("DB 저장 실패");
-            } else { 
+                
+            } else { // 🔴 [시장가 매도]
                 BigDecimal coinBal = realBalance.getOrDefault(selectedCoinCode, BigDecimal.ZERO);
+                
+                // 매도는 코인 수량만 맞으면 됨 (수수료는 들어올 돈에서 깎이니까 문제없음!)
                 if (coinBal.compareTo(inputVal) < 0) throw new RuntimeException(selectedCoinCode + " 잔고가 부족합니다.");
                 
                 BigDecimal sellTotalKRW = inputVal.multiply(currentSelectedPrice);
@@ -436,12 +455,16 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
                 marketOrder.setStatus("DONE");
                 
                 if (orderDAO.executeMarketOrder(marketOrder, this.userId, currentSelectedPrice, inputVal, sellTotalKRW)) {
-                    com.team.coin_simulator.Alerts.NotificationUtil.showToast((JFrame) SwingUtilities.getWindowAncestor(this), String.format("[체결] %s 시장가 매도 완료 (%,.0f KRW)", selectedCoinCode, sellTotalKRW));
+                    com.team.coin_simulator.Alerts.NotificationUtil.showToast((JFrame) SwingUtilities.getWindowAncestor(this),
+                    		String.format("[체결] %s 시장가 매도 완료 (%,.0f KRW)", selectedCoinCode, sellTotalKRW));
                     refreshDBData(); // 💡 DB 동기화
                 } else throw new RuntimeException("DB 저장 실패");
             }
             marketAmountField.setText(""); 
-        } catch (Exception e) { JOptionPane.showMessageDialog(this, "주문 실패: " + e.getMessage(), "에러", JOptionPane.ERROR_MESSAGE); }
+            
+        } catch (Exception e) { 
+            JOptionPane.showMessageDialog(this, "주문 실패: " + e.getMessage(), "에러", JOptionPane.ERROR_MESSAGE); 
+        }
     }
 
     // 💡 [master 장점] 지정가 폼 (버튼 팩 추가)
@@ -572,6 +595,7 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
             if (isLimitMode) { // [지정가 모드]
                 if (sideIdx == 0) { // 매수 (KRW 기준 -> 수량 계산)
                     BigDecimal availKrw = realBalance.getOrDefault("KRW", BigDecimal.ZERO);
+                    BigDecimal safeKrw = availKrw.divide(new BigDecimal("1.0005"), 8, RoundingMode.DOWN);
                     
                     String pStr = priceField.getText().replace(",", "").trim();
                     if (pStr.isEmpty()) { 
@@ -581,7 +605,7 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
                         } else return;
                     }
                     BigDecimal price = new BigDecimal(pStr);
-                    BigDecimal qty = OrderCalc.calcPercentLimitBuyQty(availKrw, fraction, price);
+                    BigDecimal qty = OrderCalc.calcPercentLimitBuyQty(safeKrw, fraction, price);
                     qtyField.setText(qty.compareTo(BigDecimal.ZERO) == 0 ? "" : qty.toPlainString());
                     
                 } else { // 매도 (코인 기준 -> 수량 계산)
@@ -597,7 +621,8 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
                     
                 } else { // 매도 (코인 기준 -> 수량 계산)
                     BigDecimal availCoin = realBalance.getOrDefault(selectedCoinCode, BigDecimal.ZERO);
-                    BigDecimal qty = OrderCalc.calcPercentSellQty(availCoin, fraction);
+                    BigDecimal safeKrw = availCoin.divide(new BigDecimal("1.0005"), 8, RoundingMode.DOWN);
+                    BigDecimal qty = OrderCalc.calcPercentSellQty(safeKrw, fraction);
                     marketAmountField.setText(qty.compareTo(BigDecimal.ZERO) == 0 ? "" : qty.toPlainString());
                 }
             }
