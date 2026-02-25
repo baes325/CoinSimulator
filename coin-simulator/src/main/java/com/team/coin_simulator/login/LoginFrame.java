@@ -79,23 +79,51 @@ public class LoginFrame extends JFrame {
             }
 
             UserDTO user = UserDAO.loginCheck(userId, password);
-            if (user != null) {
-                JOptionPane.showMessageDialog(this, user.getNickname() + "님, 환영합니다!");
 
-                try {
-                    BacktestSessionDAO sessionDAO = new BacktestSessionDAO();
-                    SessionDTO realtimeSession = sessionDAO.getOrCreateRealtimeSession(user.getUserId());
-                    SessionManager.getInstance().setCurrentSession(realtimeSession);
-                } catch (Exception ex) {
-                    System.err.println("[LoginFrame] 세션 초기화 중 오류 발생: " + ex.getMessage());
-                    ex.printStackTrace();
-                }
-
-                new MainFrame(user.getUserId());
-                this.dispose();
-            } else {
+            if (user == null) {
                 JOptionPane.showMessageDialog(this, "아이디 또는 비밀번호가 일치하지 않습니다.", "로그인 실패", JOptionPane.ERROR_MESSAGE);
+                return;
             }
+
+            // ✅ 로그인 성공: 세션 초기화 먼저
+            try {
+                BacktestSessionDAO sessionDAO = new BacktestSessionDAO();
+                SessionDTO realtimeSession = sessionDAO.getOrCreateRealtimeSession(user.getUserId());
+                SessionManager.getInstance().setCurrentSession(realtimeSession);
+            } catch (Exception ex) {
+                System.err.println("[LoginFrame] 세션 초기화 중 오류 발생: " + ex.getMessage());
+                ex.printStackTrace();
+            }
+
+            // ✅ 글씨 확실히 보이는 커스텀 알림창 (0.5초 후 메인 이동)
+            JDialog dialog = new JDialog(LoginFrame.this, "알림", false);
+            dialog.setUndecorated(true);
+            dialog.setAlwaysOnTop(true);
+
+            JPanel p = new JPanel(new BorderLayout());
+            p.setBackground(Color.WHITE);
+            p.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(new Color(220, 220, 220), 1),
+                    BorderFactory.createEmptyBorder(14, 22, 14, 22)
+            ));
+
+            JLabel msg = new JLabel(user.getNickname() + "님, 환영합니다!");
+            msg.setFont(new Font("맑은 고딕", Font.BOLD, 13));
+            msg.setForeground(new Color(40, 40, 40));
+            p.add(msg, BorderLayout.CENTER);
+
+            dialog.setContentPane(p);
+            dialog.pack();
+            dialog.setLocationRelativeTo(LoginFrame.this);
+            dialog.setVisible(true);
+
+            javax.swing.Timer t = new javax.swing.Timer(500, ev -> {
+                dialog.dispose();
+                new MainFrame(user.getUserId());
+                LoginFrame.this.dispose();
+            });
+            t.setRepeats(false);
+            t.start();
         });
 
         card.add(loginBtn);
@@ -103,7 +131,7 @@ public class LoginFrame extends JFrame {
         // ✅ 핵심: 어디에 포커스가 있든 Enter 누르면 loginBtn 클릭
         getRootPane().setDefaultButton(loginBtn);
 
-        // 이하 링크/회원가입 이동은 너 원본 그대로
+        // 이하 링크/회원가입 이동
         card.add(Box.createVerticalStrut(25));
         JPanel linkPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 0));
         linkPanel.setOpaque(false);

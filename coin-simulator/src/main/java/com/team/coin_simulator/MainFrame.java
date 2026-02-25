@@ -392,7 +392,7 @@ public class MainFrame extends JFrame {
         UpbitWebSocketDao.getInstance().start();
     }
 
-    @Override
+   
     @Override
     public void dispose() {
         shutdownBackgroundTasks();
@@ -418,3 +418,4 @@ public class MainFrame extends JFrame {
 
         SwingUtilities.invokeLater(() -> new MainFrame("test_user1"));
     }
+}
