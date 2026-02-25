@@ -119,4 +119,5 @@ public class CandleDAO {
         }
         return list;
     }
+    
 }
