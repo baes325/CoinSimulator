@@ -144,7 +144,6 @@ public class DownloadDatabase {
                     }
                     break; 
                 }
-                
             }
             
             conn.commit(); 
@@ -341,6 +340,6 @@ public class DownloadDatabase {
     
     
     public static void main(String[] args) {
-    	updateData(1);
+        updateData(1);
     }
 }

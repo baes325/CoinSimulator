@@ -116,9 +116,9 @@ public class MainFrame extends JFrame {
         new Thread(() -> {
             System.out.println("[MainFrame] 백그라운드에서 캔들 데이터 동기화를 시작합니다...");
             try {
-                //DownloadDatabase.updateData(1);
+                DownloadDatabase.updateData(1);
                 System.out.println("[MainFrame] 데이터 동기화 완료!");
-
+                
                 SwingUtilities.invokeLater(() -> {
                     if (investmentPanel != null) {
                         investmentPanel.setSessionId(currentSessionId);
