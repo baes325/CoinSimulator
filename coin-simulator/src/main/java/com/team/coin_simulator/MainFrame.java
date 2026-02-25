@@ -60,6 +60,9 @@ public class MainFrame extends JFrame {
 
     // 투자내역 화면 컴포넌트
     private Investment_details_MainPanel investmentPanel;
+    
+    // 현재 선택된 코인 심볼 (호가창 모드 전환 시 필요)
+    private String currentCoinSymbol = "BTC";
 
  // --- MainFrame 필드에 추가 ---
     private volatile boolean shuttingDown = false;
@@ -360,6 +363,8 @@ public class MainFrame extends JFrame {
         if (coinSymbol == null || coinSymbol.isEmpty()) return;
         System.out.println("[MainFrame] 코인 선택됨: " + coinSymbol);
 
+        this.currentCoinSymbol = coinSymbol; //현재 코인 심볼 저장
+        
         chartPanel.changeMarket(coinSymbol);
         updateOrderBookPanel(coinSymbol);
 
