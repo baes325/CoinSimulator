@@ -37,7 +37,7 @@ public class UpbitWebSocketDao extends WebSocketListener {
 
     // 4. 리스너 인터페이스 정의
     public interface TickerListener {
-        void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr);
+        void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr, String tradeVolumeStr);
     }
 
     // 싱글톤 접근 메서드
@@ -106,6 +106,11 @@ public class UpbitWebSocketDao extends WebSocketListener {
                 double price = data.getTrade_price();
                 double accPrice = data.getAcc_trade_price();
                 
+                // 💡 [핵심 추가] JSON 객체(TickerDto)에서 이번 틱의 거래량(trade_volume)을 가져옵니다.
+                // 만약 TickerDto에 getTrade_volume()이 없다면 에러가 날 수 있으니, DTO에 해당 필드를 꼭 추가해주세요!
+                double tradeVolume = data.getTrade_volume(); 
+                String tradeVolumeStr = String.valueOf(tradeVolume);
+
                 String priceStr;
                 if (price < 1) priceStr = String.format("%,.5f", price);
                 else if (price < 100) priceStr = String.format("%,.2f", price);
@@ -117,9 +122,9 @@ public class UpbitWebSocketDao extends WebSocketListener {
 
                 String flucStr = String.format("%.2f", data.getSigned_change_rate() * 100);
 
-                // 3. 등록된 모든 리스너에게 뿌리기
+                // 3. 등록된 모든 리스너에게 뿌리기 (🔥 파라미터 5개로 늘어남!)
                 for (TickerListener listener : listeners) {
-                    listener.onTickerUpdate(symbol, priceStr, flucStr, accPriceStr);
+                    listener.onTickerUpdate(symbol, priceStr, flucStr, accPriceStr, tradeVolumeStr);
                 }
             });
 

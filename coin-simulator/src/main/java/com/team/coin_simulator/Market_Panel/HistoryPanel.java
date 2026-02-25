@@ -188,8 +188,9 @@ public class HistoryPanel extends JPanel implements UpbitWebSocketDao.TickerList
     }
     
     @Override
-    public void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr) {
+    public void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr, String tradeVolumeStr) {
         // 기존의 updateCoinPrice 로직을 여기서 수행
+        // 화면 리스트 업데이트에는 거래량 데이터가 필요 없으므로 기존 파라미터 4개만 넘깁니다.
         updateCoinPrice(symbol, priceStr, flucStr, accPriceStr);
     }
     // [추가] 검색 필터링 로직

@@ -91,7 +91,7 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
     
     // ── 웹소켓 콜백 ───────────────────────────────────────────────
     @Override
-    public void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr) {
+    public void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr, String tradeVolumeStr) {
         boolean related = myAssetList.stream().anyMatch(d -> d.getCurrency().equals(symbol));
         if (related) {
             SwingUtilities.invokeLater(this::refreshUI);

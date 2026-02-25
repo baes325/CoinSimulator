@@ -27,7 +27,7 @@ public class PriceAlertService implements UpbitWebSocketDao.TickerListener {
     }
 
     @Override
-    public void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr) {
+    public void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr, String tradeVolumeStr) {
         // 1. 현재가 파싱
         String cleanPrice = priceStr.replace(",", "").replace(" KRW", "").trim();
         if (cleanPrice.isEmpty() || cleanPrice.equals("연결중...")) return;

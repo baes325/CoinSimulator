@@ -229,28 +229,39 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
     }
 
     @Override
-    public void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr) {
+    public void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr, String tradeVolumeStr) {
         String cleanPrice = priceStr.replace(",", "").replace(" KRW", "").trim();
         if (cleanPrice.isEmpty() || cleanPrice.equals("연결중...")) return;
 
         BigDecimal currentPrice = new BigDecimal(cleanPrice);
         latestPrices.put(symbol, currentPrice);
 
-        // [master 장점] 💡 시세 업데이트 시 자동체결 엔진 구동 쓰레드
+        //시세 업데이트 시 자동체결 엔진 구동 쓰레드
         new Thread(() -> {
-            List<OrderDTO> executedList = orderDAO.checkAndExecuteLimitOrders(symbol, currentPrice);
-            if (executedList != null && !executedList.isEmpty()) {
-                for (OrderDTO order : executedList) {
-                    String typeStr = order.getSide().equals("BID") ? "매수" : "매도";
-                    String msg = String.format("[지정가 체결] %s %s 완료!\n(가격: %,.0f KRW, 수량: %s)", 
-                            symbol, typeStr, order.getOriginalPrice(), order.getOriginalVolume().toPlainString());
-                    
-                    SwingUtilities.invokeLater(() -> {
-                        JFrame parentFrame = (JFrame) SwingUtilities.getWindowAncestor(OrderPanel.this);
-                        if(parentFrame != null) com.team.coin_simulator.Alerts.NotificationUtil.showToast(parentFrame, msg);
-                        refreshDBData(); // 체결 성공 시 DB 새로고침!
-                    });
+            try {
+            	BigDecimal realTradeVolume = new BigDecimal(tradeVolumeStr);
+            	System.out.println(">> [CCTV] 업비트 실시간 비트코인 거래량: " + realTradeVolume + " 개");
+
+                // 파라미터 3개(코인명, 현재가, 거래량)를 정확히 넘겨줍니다.
+List<OrderDTO> executedList = orderDAO.checkAndExecuteLimitOrders(symbol, currentPrice, realTradeVolume);
+                
+                if (executedList != null && !executedList.isEmpty()) {
+                    for (OrderDTO order : executedList) {
+                        String typeStr = order.getSide().equals("BID") ? "매수" : "매도";
+                        
+                        // 부분 체결 알림
+                        String msg = String.format("[부분 체결] %s %s!\n(가격: %,.0f KRW, 체결량: %s)", 
+                                symbol, typeStr, order.getOriginalPrice(), order.getOriginalVolume().toPlainString());
+                        
+                        javax.swing.SwingUtilities.invokeLater(() -> {
+                            javax.swing.JFrame parentFrame = (javax.swing.JFrame) javax.swing.SwingUtilities.getWindowAncestor(OrderPanel.this);
+                            if(parentFrame != null) com.team.coin_simulator.Alerts.NotificationUtil.showToast(parentFrame, msg);
+                            refreshDBData(); 
+                        });
+                    }
                 }
+            } catch (Exception e) {
+                e.printStackTrace();
             }
         }).start();
 
@@ -259,7 +270,7 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         this.currentSelectedPrice = currentPrice;
         String krName = com.team.coin_simulator.CoinConfig.COIN_INFO.getOrDefault(symbol, symbol);
         
-        SwingUtilities.invokeLater(() -> {
+        javax.swing.SwingUtilities.invokeLater(() -> {
             lblSelectedCoinInfo.setText(krName + " - 현재가 " + String.format("%,.0f", currentSelectedPrice) + " KRW");
             if (isLimitMode && priceField.getText().isEmpty()) {
                 priceField.setText(cleanPrice); updateOrderSummary();

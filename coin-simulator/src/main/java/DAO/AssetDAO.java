@@ -19,7 +19,8 @@ public class AssetDAO {
     public List<AssetDTO> getUserAssets(String userId, long sessionId) {
         List<AssetDTO> list = new ArrayList<>();
         // WHERE 절에 session_id = ? 추가 완료
-        String sql = "SELECT * FROM assets WHERE user_id = ? AND session_id = ? AND currency != 'KRW' AND (balance != 0 OR locked != 0)";
+String sql = "SELECT * FROM assets WHERE user_id = ? AND session_id = ? AND currency <> 'KRW' AND (balance <> 0 OR locked <> 0)";
+        
         try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             
@@ -32,6 +33,8 @@ public class AssetDAO {
                 }
             }
         } catch (Exception e) {
+            // 에러가 났을 때 원인을 정확히 파악하기 위해 출력 메시지를 강화
+            System.err.println(">> [getUserAssets 조회 에러] " + e.getMessage());
             e.printStackTrace();
         }
         return list;
