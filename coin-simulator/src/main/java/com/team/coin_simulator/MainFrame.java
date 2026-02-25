@@ -120,13 +120,14 @@ public class MainFrame extends JFrame {
         marketSyncThread = new Thread(() -> {
             System.out.println("[MainFrame] 백그라운드에서 캔들 데이터 동기화를 시작합니다...");
             try {
+
                 // 로그아웃/종료 중이면 실행 안 함
                 if (shuttingDown || Thread.currentThread().isInterrupted()) return;
 
                 if (shuttingDown || Thread.currentThread().isInterrupted()) return;
 
                 System.out.println("[MainFrame] 데이터 동기화 완료!");
-
+                
                 SwingUtilities.invokeLater(() -> {
                     // ✅ 이미 로그아웃/종료면 UI 접근 금지
                     if (shuttingDown) return;
