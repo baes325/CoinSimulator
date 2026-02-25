@@ -9,7 +9,9 @@ import java.util.Map;
 import java.math.BigDecimal;
 
 public class OrderDAO {
-    
+    //수수료 정의
+	private static final BigDecimal FEE_RATE = new BigDecimal("0.0005");
+	
     //지정가 주문 (자산 잠금까지 완벽 처리)
     public boolean insertOrder(DTO.OrderDTO order) {
         String insertOrderSql = "INSERT INTO orders (order_id, user_id, session_id, market, side, type, original_price, original_volume, remaining_volume, status) " +
@@ -39,8 +41,15 @@ public class OrderDAO {
 
             //자산 잠금 (KRW 또는 코인)
             String currency = order.getSide().equals("BID") ? "KRW" : order.getMarket().replace("KRW-", "");
-            BigDecimal requiredAmt = order.getSide().equals("BID") ? order.getOriginalPrice().multiply(order.getOriginalVolume()) : order.getOriginalVolume();
-
+            BigDecimal requiredAmt;
+            if (order.getSide().equals("BID")) { // 매수: (가격 * 수량) + 0.05% 수수료
+                BigDecimal orderCost = order.getOriginalPrice().multiply(order.getOriginalVolume());
+                BigDecimal fee = orderCost.multiply(FEE_RATE);
+                requiredAmt = orderCost.add(fee);
+            } else { // 매도: 코인 수량만 묶음
+                requiredAmt = order.getOriginalVolume();
+            }
+            
             try (PreparedStatement pstmt = conn.prepareStatement(lockAssetSql)) {
                 pstmt.setString(1, order.getUserId());
                 pstmt.setLong(2, order.getSessionId());
@@ -209,15 +218,15 @@ public class OrderDAO {
         }
     }
     
-    //시장가 주문 (즉시 체결)
+  //시장가 주문 (즉시 체결 + 수수료 적용)
     public boolean executeMarketOrder(OrderDTO order, String userId, BigDecimal tradePrice, BigDecimal tradeVolume, BigDecimal tradeTotalAmt) {
         String insertOrderSql = "INSERT INTO orders (order_id, user_id, session_id, market, side, type, original_price, original_volume, remaining_volume, status) " +
                                 "VALUES (?, ?, ?, ?, ?, 'MARKET', ?, ?, ?, 'DONE')";
         
+        // 🚀 [수정] fee 파라미터 적용을 위해 0 대신 ? 로 변경
         String insertExecSql = "INSERT INTO executions (order_id, price, volume, fee, market, side, user_id, total_price) " +
-                               "VALUES (?, ?, ?, 0, ?, ?, ?, ?)"; 
+                               "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"; 
         
-        // UPSERT 구문으로 해당 세션의 자산이 없으면 생성하고, 있으면 더함
         String updateAssetSql = "INSERT INTO assets (user_id, session_id, currency, balance, locked) VALUES (?, ?, ?, ?, 0) " +
                                 "ON DUPLICATE KEY UPDATE balance = balance + ?";
 
@@ -225,71 +234,56 @@ public class OrderDAO {
         try {
             conn = DBConnection.getConnection();
             conn.setAutoCommit(false);
+            
+            // 💡 [수수료 계산]
+            BigDecimal fee = tradeTotalAmt.multiply(FEE_RATE);
 
             // [1] 주문 내역 저장
             try (PreparedStatement pstmt = conn.prepareStatement(insertOrderSql)) {
-                pstmt.setLong(1, order.getOrderId());
-                pstmt.setString(2, userId);
-                pstmt.setLong(3, order.getSessionId()); 
-                pstmt.setString(4, order.getMarket()); 
-                pstmt.setString(5, order.getSide());
-                pstmt.setBigDecimal(6, tradePrice);
-                pstmt.setBigDecimal(7, tradeVolume);
-                pstmt.setBigDecimal(8, BigDecimal.ZERO);
+                pstmt.setLong(1, order.getOrderId()); pstmt.setString(2, userId); pstmt.setLong(3, order.getSessionId()); 
+                pstmt.setString(4, order.getMarket()); pstmt.setString(5, order.getSide());
+                pstmt.setBigDecimal(6, tradePrice); pstmt.setBigDecimal(7, tradeVolume); pstmt.setBigDecimal(8, BigDecimal.ZERO);
                 pstmt.executeUpdate();
             }
-
-            // [2] 체결 내역 저장
+            
+            // [2] 체결 내역 저장 (수수료 포함)
             try (PreparedStatement pstmt = conn.prepareStatement(insertExecSql)) {
-                pstmt.setLong(1, order.getOrderId());     
-                pstmt.setBigDecimal(2, tradePrice);       
-                pstmt.setBigDecimal(3, tradeVolume);      
-                pstmt.setString(4, order.getMarket());     
-                pstmt.setString(5, order.getSide());      
-                pstmt.setString(6, userId);               
-                pstmt.setBigDecimal(7, tradeTotalAmt);    
+                pstmt.setLong(1, order.getOrderId()); pstmt.setBigDecimal(2, tradePrice); pstmt.setBigDecimal(3, tradeVolume);      
+                pstmt.setBigDecimal(4, fee); // 💡 수수료 등록!
+                pstmt.setString(5, order.getMarket()); pstmt.setString(6, order.getSide()); pstmt.setString(7, userId);               
+                pstmt.setBigDecimal(8, tradeTotalAmt);    
                 pstmt.executeUpdate();
             }
 
-            // [3] 자산 업데이트 (KRW와 코인 각각 처리)
+            // [3] 자산 업데이트
             String symbol = order.getMarket().replace("KRW-", ""); 
             
             if (order.getSide().equals("BID")) { // 매수
+                BigDecimal totalDeduct = tradeTotalAmt.add(fee); // 원금 + 수수료 차감
                 // KRW 차감
                 try (PreparedStatement pstmt = conn.prepareStatement(updateAssetSql)) {
-                    pstmt.setString(1, userId);
-                    pstmt.setLong(2, order.getSessionId());
-                    pstmt.setString(3, "KRW");
-                    pstmt.setBigDecimal(4, tradeTotalAmt.negate());
-                    pstmt.setBigDecimal(5, tradeTotalAmt.negate());
+                    pstmt.setString(1, userId); pstmt.setLong(2, order.getSessionId()); pstmt.setString(3, "KRW");
+                    pstmt.setBigDecimal(4, totalDeduct.negate()); pstmt.setBigDecimal(5, totalDeduct.negate());
                     pstmt.executeUpdate();
                 }
                 // 코인 획득
                 try (PreparedStatement pstmt = conn.prepareStatement(updateAssetSql)) {
-                    pstmt.setString(1, userId);
-                    pstmt.setLong(2, order.getSessionId());
-                    pstmt.setString(3, symbol);
-                    pstmt.setBigDecimal(4, tradeVolume);
-                    pstmt.setBigDecimal(5, tradeVolume);
+                    pstmt.setString(1, userId); pstmt.setLong(2, order.getSessionId()); pstmt.setString(3, symbol);
+                    pstmt.setBigDecimal(4, tradeVolume); pstmt.setBigDecimal(5, tradeVolume);
                     pstmt.executeUpdate();
                 }
             } else { // 매도
+                BigDecimal totalEarned = tradeTotalAmt.subtract(fee); // 원금 - 수수료 획득
                 // 코인 차감
                 try (PreparedStatement pstmt = conn.prepareStatement(updateAssetSql)) {
-                    pstmt.setString(1, userId);
-                    pstmt.setLong(2, order.getSessionId());
-                    pstmt.setString(3, symbol);
-                    pstmt.setBigDecimal(4, tradeVolume.negate());
-                    pstmt.setBigDecimal(5, tradeVolume.negate());
+                    pstmt.setString(1, userId); pstmt.setLong(2, order.getSessionId()); pstmt.setString(3, symbol);
+                    pstmt.setBigDecimal(4, tradeVolume.negate()); pstmt.setBigDecimal(5, tradeVolume.negate());
                     pstmt.executeUpdate();
                 }
                 // KRW 획득
                 try (PreparedStatement pstmt = conn.prepareStatement(updateAssetSql)) {
-                    pstmt.setString(1, userId);
-                    pstmt.setLong(2, order.getSessionId());
-                    pstmt.setString(3, "KRW");
-                    pstmt.setBigDecimal(4, tradeTotalAmt);
-                    pstmt.setBigDecimal(5, tradeTotalAmt);
+                    pstmt.setString(1, userId); pstmt.setLong(2, order.getSessionId()); pstmt.setString(3, "KRW");
+                    pstmt.setBigDecimal(4, totalEarned); pstmt.setBigDecimal(5, totalEarned);
                     pstmt.executeUpdate();
                 }
             }
@@ -321,7 +315,7 @@ public class OrderDAO {
      * 실제 거래소의 체결 원칙 (가격 우선 -> 시간 우선)을 엄격하게 적용하여
      * 현재 시세와 교차(Cross)되는 주문을 찾아 체결시킵니다.
      */
-public List<OrderDTO> checkAndExecuteLimitOrders(String market, BigDecimal currentRealPrice, BigDecimal currentTradeVolume, long sessionId) {
+    public List<OrderDTO> checkAndExecuteLimitOrders(String market, BigDecimal currentRealPrice, BigDecimal currentTradeVolume, long sessionId) {
         
         if (!market.startsWith("KRW-")) {
             market = "KRW-" + market;
@@ -387,7 +381,7 @@ public List<OrderDTO> checkAndExecuteLimitOrders(String market, BigDecimal curre
 
         if (executeVol.compareTo(BigDecimal.ZERO) <= 0) return availableTradeVolume;
 
-        // 2. 주문 상태 업데이트 (🔥 동시성 제어 + 부분 체결 계산 로직)
+        // 2. 주문 상태 업데이트 (동시성 제어 + 부분 체결 계산 로직)
         // 남은 수량에서 방금 체결한 만큼 빼고, 만약 그 결과가 0 이하면 'DONE', 아니면 여전히 'WAIT' 유지
         String updateOrderSql = "UPDATE orders SET " +
                 "status = CASE WHEN remaining_volume - ? <= 0 THEN 'DONE' ELSE 'WAIT' END, " +
@@ -406,13 +400,18 @@ public List<OrderDTO> checkAndExecuteLimitOrders(String market, BigDecimal curre
         // 3. 자산 계산 (이번에 체결된 수량 'executeVol' 만큼만 계산!)
         BigDecimal executionPrice = order.getOriginalPrice();
         BigDecimal totalExecutionCost = executionPrice.multiply(executeVol);
+        BigDecimal fee = totalExecutionCost.multiply(FEE_RATE);
         String coinSymbol = market.replace("KRW-", ""); 
 
         if ("BID".equals(expectedSide)) {
             // 원화 금고 차감 -> 코인 지갑 증가
+        	BigDecimal deductAmt = totalExecutionCost.add(fee);
             String deductLockedSql = "UPDATE assets SET locked = locked - ? WHERE user_id = ? AND session_id = ? AND currency = 'KRW' AND locked >= ?";
             try (PreparedStatement dStmt = conn.prepareStatement(deductLockedSql)) {
-                dStmt.setBigDecimal(1, totalExecutionCost); dStmt.setString(2, order.getUserId()); dStmt.setLong(3, order.getSessionId()); dStmt.setBigDecimal(4, totalExecutionCost);
+                dStmt.setBigDecimal(1, deductAmt);
+                dStmt.setString(2, order.getUserId()); 
+                dStmt.setLong(3, order.getSessionId()); 
+                dStmt.setBigDecimal(4, deductAmt);
                 dStmt.executeUpdate();
             }
             String addCoinSql = "INSERT INTO assets (user_id, session_id, currency, balance, locked) VALUES (?, ?, ?, ?, 0) ON DUPLICATE KEY UPDATE balance = balance + ?";
@@ -427,18 +426,21 @@ public List<OrderDTO> checkAndExecuteLimitOrders(String market, BigDecimal curre
                 dStmt.setBigDecimal(1, executeVol); dStmt.setString(2, order.getUserId()); dStmt.setLong(3, order.getSessionId()); dStmt.setString(4, coinSymbol); dStmt.setBigDecimal(5, executeVol);
                 dStmt.executeUpdate();
             }
+            BigDecimal earnedKrw = totalExecutionCost.subtract(fee);
             String addKrwSql = "UPDATE assets SET balance = balance + ? WHERE user_id = ? AND session_id = ? AND currency = 'KRW'";
             try (PreparedStatement aStmt = conn.prepareStatement(addKrwSql)) {
-                aStmt.setBigDecimal(1, totalExecutionCost); aStmt.setString(2, order.getUserId()); aStmt.setLong(3, order.getSessionId());
+                aStmt.setBigDecimal(1, earnedKrw); // 💡 뺀 금액 적용
+                aStmt.setString(2, order.getUserId()); aStmt.setLong(3, order.getSessionId());
                 aStmt.executeUpdate();
             }
         }
 
         // 4. 영수증(executions) 발급 (부분 체결된 만큼만!)
-        String insertExecSql = "INSERT INTO executions (order_id, user_id, market, side, price, volume, total_price, fee) VALUES (?, ?, ?, ?, ?, ?, ?, 0)";
+        String insertExecSql = "INSERT INTO executions (order_id, user_id, market, side, price, volume, total_price, fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         try (PreparedStatement insertExec = conn.prepareStatement(insertExecSql)) {
             insertExec.setLong(1, order.getOrderId()); insertExec.setString(2, order.getUserId()); insertExec.setString(3, market); insertExec.setString(4, expectedSide);
             insertExec.setBigDecimal(5, executionPrice); insertExec.setBigDecimal(6, executeVol); insertExec.setBigDecimal(7, totalExecutionCost);
+            insertExec.setBigDecimal(8, fee);
             insertExec.executeUpdate();
         }
 

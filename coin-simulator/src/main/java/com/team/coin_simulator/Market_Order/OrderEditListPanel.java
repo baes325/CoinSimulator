@@ -156,8 +156,14 @@ public class OrderEditListPanel extends JPanel {
     private void cancelOrder(OrderDTO order, String coinCode) {
         //남은 수량(remainingVolume)만큼만 Locked 해제해야 합니다.
         BigDecimal currentRemaining = order.getRemainingVolume();
-        BigDecimal lockedAmt = order.getSide().equals("BID") ? 
-                               order.getOriginalPrice().multiply(currentRemaining) : currentRemaining;
+        BigDecimal lockedAmt;
+        if (order.getSide().equals("BID")) {
+            BigDecimal remainingCost = order.getOriginalPrice().multiply(currentRemaining);
+            BigDecimal fee = remainingCost.multiply(new BigDecimal("0.0005"));
+            lockedAmt = remainingCost.add(fee);
+        } else {
+            lockedAmt = currentRemaining;
+        }
 
         boolean isDBSuccess = orderDAO.cancelOrder(order.getOrderId(), this.userId, order.getSide(), lockedAmt);
         
