@@ -125,7 +125,7 @@ public class Assets_TablePanel extends JPanel {
         table.getColumnModel().getColumn(1).setCellRenderer(centerCell());
 
         // 2: 매수평균가 (우측 + 수정 링크)
-//        table.getColumnModel().getColumn(2).setCellRenderer(new AvgPriceRenderer());
+        table.getColumnModel().getColumn(2).setCellRenderer(new AvgPriceRenderer());
 
         // 3: 매수금액 (우측)
         table.getColumnModel().getColumn(3).setCellRenderer(rightCell());
@@ -163,15 +163,17 @@ public class Assets_TablePanel extends JPanel {
             String pnlKrwStr = String.format("%+,d KRW", pnlKrw);
 
             tableModel.addRow(new Object[]{
-                dto.getCurrency(),                             // 0: 코인명
-                formatCoinQty(dto),                            // 1: 보유수량
-                dto.getAvgPrice() != null ? String.format("%,d KRW", dto.getAvgPrice().longValue()) : "0 KRW",  // 2
-                dto.getAvgPrice() != null && dto.getBalance() != null
-                    ? String.format("%,d KRW", dto.getAvgPrice().multiply(dto.getBalance()).longValue()) : "0 KRW", // 3
-                dto.getTotalValue() != null ? String.format("%,d KRW", dto.getTotalValue().longValue()) : "0 KRW",  // 4
-                pnlRate + "||" + pnlStr + "||" + pnlKrwStr,  // 5: 손익 복합 문자열
-                                                         
-            });
+            	    dto.getCurrency(),                                             // 0: 코인명
+            	    formatCoinQty(dto),                                            // 1: 보유수량
+            	    // 2: 매수평균가 (소수점 4자리까지 표시되도록 수정)
+            	    dto.getAvgPrice() != null ? String.format("%,.4f KRW", dto.getAvgPrice().doubleValue()) : "0 KRW",  
+            	    // 3: 매수금액 (단순 절사 longValue() 대신 반올림 처리 적용)
+            	    dto.getAvgPrice() != null && dto.getBalance() != null
+            	        ? String.format("%,d KRW", dto.getAvgPrice().multiply(dto.getBalance()).setScale(0, java.math.RoundingMode.HALF_UP).longValue()) : "0 KRW", 
+            	    // 4: 평가금액 (반올림 처리)
+            	    dto.getTotalValue() != null ? String.format("%,d KRW", dto.getTotalValue().setScale(0, java.math.RoundingMode.HALF_UP).longValue()) : "0 KRW",  
+            	    pnlRate + "||" + pnlStr + "||" + pnlKrwStr,                    // 5: 손익 복합 문자열
+            	});
         }
         tableModel.fireTableDataChanged();
     }
@@ -238,33 +240,33 @@ public class Assets_TablePanel extends JPanel {
     }
 
     /** 매수평균가 + "수정" 링크 */
-//    static class AvgPriceRenderer extends DefaultTableCellRenderer {
-//        @Override public Component getTableCellRendererComponent(
-//                JTable t, Object v, boolean sel, boolean focus, int row, int col) {
-//            JPanel cell = new JPanel();
-//            cell.setLayout(new BoxLayout(cell, BoxLayout.Y_AXIS));
-//            cell.setBackground(row % 2 == 0 ? C_ROW_ODD : C_ROW_EVEN);
-//            cell.setBorder(new EmptyBorder(0, 0, 0, 10));
-//
-//            JLabel price = new JLabel(v != null ? v.toString() : "0 KRW");
-//            price.setFont(new Font("맑은 고딕", Font.PLAIN, 12));
-//            price.setForeground(C_VALUE);
-//            price.setAlignmentX(Component.RIGHT_ALIGNMENT);
-//
-//            JLabel edit = new JLabel("수정");
-//            edit.setFont(new Font("맑은 고딕", Font.PLAIN, 10));
-//            edit.setForeground(new Color(100, 140, 210));
-//            edit.setAlignmentX(Component.RIGHT_ALIGNMENT);
-//
-//            cell.add(Box.createVerticalGlue());
-//            cell.add(price);
-//            cell.add(edit);
-//            cell.add(Box.createVerticalGlue());
-//
-//            if (sel) cell.setBackground(new Color(240, 245, 255));
-//            return cell;
-//        }
-//    }
+    static class AvgPriceRenderer extends DefaultTableCellRenderer {
+        @Override public Component getTableCellRendererComponent(
+                JTable t, Object v, boolean sel, boolean focus, int row, int col) {
+            JPanel cell = new JPanel();
+            cell.setLayout(new BoxLayout(cell, BoxLayout.Y_AXIS));
+            cell.setBackground(row % 2 == 0 ? C_ROW_ODD : C_ROW_EVEN);
+            cell.setBorder(new EmptyBorder(0, 0, 0, 10));
+
+            JLabel price = new JLabel(v != null ? v.toString() : "0 KRW");
+            price.setFont(new Font("맑은 고딕", Font.PLAIN, 12));
+            price.setForeground(C_VALUE);
+            price.setAlignmentX(Component.RIGHT_ALIGNMENT);
+
+            JLabel edit = new JLabel("수정");
+            edit.setFont(new Font("맑은 고딕", Font.PLAIN, 10));
+            edit.setForeground(new Color(100, 140, 210));
+            edit.setAlignmentX(Component.RIGHT_ALIGNMENT);
+
+            cell.add(Box.createVerticalGlue());
+            cell.add(price);
+            cell.add(edit);
+            cell.add(Box.createVerticalGlue());
+
+            if (sel) cell.setBackground(new Color(240, 245, 255));
+            return cell;
+        }
+    }
 
     /** 평가손익(%) 셀: % 수익률 + 손익금 2줄 */
     static class PnlRenderer extends DefaultTableCellRenderer {

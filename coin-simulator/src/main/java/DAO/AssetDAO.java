@@ -27,7 +27,7 @@ String sql = "SELECT * FROM assets WHERE user_id = ? AND session_id = ? AND curr
             pstmt.setString(1, userId);
             pstmt.setLong(2, sessionId);
             
-            try (ResultSet rs = pstmt.executeQuery()) {
+            try (ResultSet rs = pstmt.executeQuery()) {	
                 while (rs.next()) {
                     list.add(mapResultSetToDTO(rs));
                 }
