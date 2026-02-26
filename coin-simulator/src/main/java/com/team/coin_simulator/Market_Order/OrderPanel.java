@@ -32,10 +32,10 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
     private CardLayout cardLayout;
     private JPanel inputCardPanel;
     private JTextField priceField, qtyField, marketAmountField;
-    private JLabel valAvailable, valTotal, valExpected, lblSelectedCoinInfo, lblMarketUnit;
+    private JLabel valAvailable, valTotal, valExpected, lblSelectedCoinInfo, lblMarketUnit, lblAutoCoinInfo;
     private JButton btnAction;
     
-    // 💡 [master 장점] 분리된 주문 정정 패널 도입
+    // 분리된 주문 정정 패널 도입
     private OrderEditListPanel orderEditListPanel; 
 
     private String userId;
@@ -60,34 +60,39 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
         setPreferredSize(new Dimension(350, 600));
 
         // 상단 탭
-        JPanel topTabPanel = new JPanel(new GridLayout(1, 3));
+        JPanel topTabPanel = new JPanel(new GridLayout(1, 4));
         topTabPanel.setBackground(Color.WHITE);
         TabButton btnBid = new TabButton("매수");
         TabButton btnAsk = new TabButton("매도");
+        TabButton btnAuto = new TabButton("자동/예약");
         TabButton btnEdit = new TabButton("주문정정");
         btnBid.setSelected(true);
-        topTabPanel.add(btnBid); topTabPanel.add(btnAsk); topTabPanel.add(btnEdit);
+        topTabPanel.add(btnBid); topTabPanel.add(btnAsk); topTabPanel.add(btnAuto); topTabPanel.add(btnEdit);
         add(topTabPanel, BorderLayout.NORTH);
 
         cardLayout = new CardLayout();
         inputCardPanel = new JPanel(cardLayout);
 
-        // 1. 매수/매도 입력 패널
+        //매수/매도 입력 패널
         JPanel tradePanel = createTradePanel();
+        //자동 매매 입력 패널
+        JPanel autoPanel = createAutoOrderPanel();
 
-        // 2. 분리한 주문 정정/취소 리스트 패널 장착 (콜백으로 refreshDBData 전달)
+        //분리한 주문 정정/취소 리스트 패널 장착 (콜백으로 refreshDBData 전달)
         orderEditListPanel = new OrderEditListPanel(this.userId, this::refreshDBData);
 
         inputCardPanel.add(tradePanel, "TRADE");
+        inputCardPanel.add(autoPanel, "AUTO");
         inputCardPanel.add(orderEditListPanel, "EDIT");
 
         add(inputCardPanel, BorderLayout.CENTER);
         
         // 탭 전환 이벤트
-        btnBid.addActionListener(e -> { switchSide(0, btnBid, btnAsk, btnEdit); cardLayout.show(inputCardPanel, "TRADE"); });
-        btnAsk.addActionListener(e -> { switchSide(1, btnAsk, btnBid, btnEdit); cardLayout.show(inputCardPanel, "TRADE"); });
-        btnEdit.addActionListener(e -> { switchSide(-1, btnEdit, btnBid, btnAsk); cardLayout.show(inputCardPanel, "EDIT"); });
-
+        btnBid.addActionListener(e -> { switchSide(0, btnBid, btnAsk, btnAuto, btnEdit); cardLayout.show(inputCardPanel, "TRADE"); });
+        btnAsk.addActionListener(e -> { switchSide(1, btnAsk, btnBid, btnAuto, btnEdit); cardLayout.show(inputCardPanel, "TRADE"); });
+        btnAuto.addActionListener(e -> { switchSide(2, btnAuto, btnBid, btnAsk, btnEdit); cardLayout.show(inputCardPanel, "AUTO"); });
+        btnEdit.addActionListener(e -> { switchSide(-1, btnEdit, btnBid, btnAsk, btnAuto); cardLayout.show(inputCardPanel, "EDIT"); });
+        
         // 초기 데이터 로드 및 웹소켓 시작
         refreshDBData();
         if (!isBacktesting) {
@@ -255,13 +260,20 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
         
         if (cachedPrice != null) {
             this.currentSelectedPrice = cachedPrice;
-            if (lblSelectedCoinInfo != null) lblSelectedCoinInfo.setText(krName + " - 현재가 " + String.format("%,.0f", cachedPrice) + " KRW");
+            String text = krName + " - 현재가 " + String.format("%,.0f", cachedPrice) + " KRW";
+            
+            if (lblSelectedCoinInfo != null) lblSelectedCoinInfo.setText(text);
+            if (lblAutoCoinInfo != null) lblAutoCoinInfo.setText(text); 
+            
             if (isLimitMode && priceField != null) priceField.setText(cachedPrice.toPlainString());
             updateOrderSummary();
         } else {
-            if (lblSelectedCoinInfo != null) lblSelectedCoinInfo.setText(krName + " (" + coinSymbol + ")");
+            String text = krName + " (" + coinSymbol + ")";
+            
+            if (lblSelectedCoinInfo != null) lblSelectedCoinInfo.setText(text);
+            if (lblAutoCoinInfo != null) lblAutoCoinInfo.setText(text); 
         }
-        switchSide(sideIdx, null, null, null); 
+        switchSide(sideIdx, null, null, null, null); 
     }
 
     @Override
@@ -305,7 +317,10 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
         String krName = com.team.coin_simulator.CoinConfig.COIN_INFO.getOrDefault(symbol, symbol);
         
         javax.swing.SwingUtilities.invokeLater(() -> {
-            lblSelectedCoinInfo.setText(krName + " - 현재가 " + String.format("%,.0f", currentSelectedPrice) + " KRW");
+        	String text = krName + " - 현재가 " + String.format("%,.0f", currentSelectedPrice) + " KRW";
+            if (lblSelectedCoinInfo != null) lblSelectedCoinInfo.setText(text);
+            if (lblAutoCoinInfo != null) lblAutoCoinInfo.setText(text);
+            
             if (isLimitMode && priceField.getText().isEmpty()) {
                 priceField.setText(cleanPrice); updateOrderSummary();
             }
@@ -347,12 +362,14 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
         } catch (Exception e) { valExpected.setText("계산 불가"); }
     }
 
-    private void switchSide(int side, TabButton selected, TabButton un1, TabButton un2) {
+    private void switchSide(int side, TabButton selected, TabButton un1, TabButton un2, TabButton un3) {
         this.sideIdx = side;
         if (selected != null) selected.setSelected(true);
         if (un1 != null) un1.setSelected(false);
         if (un2 != null) un2.setSelected(false);
-        if (side != -1) {
+        if (un3 != null) un3.setSelected(false); // 💡 추가됨
+
+        if (side == 0 || side == 1) { // 매수 or 매도일 때만 하단 액션버튼 세팅
             btnAction.setText(side == 0 ? "매수" : "매도");
             btnAction.setBackground(side == 0 ? COLOR_BID : COLOR_ASK);
             if (lblMarketUnit != null) {
@@ -666,5 +683,103 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
     //MainFrame에서 알림창 띄울 때 현재가를 가져가기 위한 메서드
     public BigDecimal getCurrentSelectedPrice() {
         return this.currentSelectedPrice;
+    }
+    
+    //자동/예약 매매 전용 화면을 그리는 메서드
+    private JPanel createAutoOrderPanel() {
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
+        p.setBackground(Color.WHITE);
+
+        // 상단 안내
+        JLabel lblTitle = new JLabel("특수 예약 주문 (Stop-Loss / Take-Profit)");
+        lblTitle.setFont(new Font("맑은 고딕", Font.BOLD, 14));
+        lblTitle.setAlignmentX(Component.CENTER_ALIGNMENT);
+        p.add(lblTitle);
+        p.add(Box.createVerticalStrut(20));
+        //현재 코인과 가격을 띄워줄 전용 라벨
+        lblAutoCoinInfo = new JLabel("비트코인 (BTC)");
+        lblAutoCoinInfo.setFont(new Font("맑은 고딕", Font.BOLD, 16));
+        lblAutoCoinInfo.setForeground(new Color(155, 89, 182)); // 보라색으로 깔맞춤
+        lblAutoCoinInfo.setAlignmentX(Component.CENTER_ALIGNMENT);
+        p.add(lblAutoCoinInfo);
+        p.add(Box.createVerticalStrut(20));
+
+        // 폼 영역 (GridLayout)
+        JPanel formPanel = new JPanel(new GridLayout(4, 2, 5, 15));
+        formPanel.setBackground(Color.WHITE);
+        formPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 160));
+
+        formPanel.add(new JLabel("목표 가격 (KRW):"));
+        JTextField tfTargetPrice = new JTextField(); styleField(tfTargetPrice);
+        formPanel.add(tfTargetPrice);
+
+        formPanel.add(new JLabel("주문 수량 (개):"));
+        JTextField tfVolume = new JTextField(); styleField(tfVolume);
+        formPanel.add(tfVolume);
+
+        formPanel.add(new JLabel("조건 및 방향:"));
+        JPanel comboPanel = new JPanel(new GridLayout(1, 2, 5, 0));
+        JComboBox<String> cbCondition = new JComboBox<>(new String[]{"이상 (돌파)", "이하 (이탈)"});
+        JComboBox<String> cbSide = new JComboBox<>(new String[]{"매도 (팔기)", "매수 (사기)"});
+        comboPanel.add(cbCondition); comboPanel.add(cbSide);
+        formPanel.add(comboPanel);
+
+        p.add(formPanel);
+        p.add(Box.createVerticalGlue());
+
+        // 하단 예약 버튼
+        JButton btnSubmit = new JButton("특수 주문 예약하기");
+        btnSubmit.setFont(new Font("맑은 고딕", Font.BOLD, 16));
+        btnSubmit.setBackground(new Color(155, 89, 182)); // 보라색
+        btnSubmit.setForeground(Color.WHITE);
+        btnSubmit.setFocusPainted(false);
+        btnSubmit.setOpaque(true);
+        btnSubmit.setBorderPainted(false);
+        btnSubmit.setMaximumSize(new Dimension(Integer.MAX_VALUE, 50));
+        btnSubmit.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        btnSubmit.addActionListener(e -> {
+            try {
+                BigDecimal target = new BigDecimal(tfTargetPrice.getText().replace(",", "").trim());
+                BigDecimal vol = new BigDecimal(tfVolume.getText().replace(",", "").trim());
+
+                if (vol.compareTo(BigDecimal.ZERO) <= 0) {
+                    JOptionPane.showMessageDialog(this, "수량은 0보다 커야 합니다."); return;
+                }
+
+                String cond = cbCondition.getSelectedIndex() == 0 ? "ABOVE" : "BELOW";
+                String side = cbSide.getSelectedIndex() == 0 ? "ASK" : "BID";
+
+                DAO.AutoOrderDAO autoOrderDAO = new DAO.AutoOrderDAO();
+                DTO.AutoOrderDTO dto = new DTO.AutoOrderDTO();
+                dto.setUserId(this.userId);
+                dto.setSessionId(getSessionId());
+                dto.setMarket("KRW-" + selectedCoinCode);
+                dto.setTriggerPrice(target);
+                dto.setVolume(vol);
+                dto.setConditionType(cond);
+                dto.setSide(side);
+
+                if (autoOrderDAO.insertAutoOrder(dto)) {
+                    JOptionPane.showMessageDialog(this, "특수 주문 예약 완료!\n목표가 도달 시 시장가로 체결됩니다.");
+                    tfTargetPrice.setText(""); tfVolume.setText("");
+                    
+                    // MainFrame의 엔진 갱신
+                    com.team.coin_simulator.MainFrame mainFrame = (com.team.coin_simulator.MainFrame) SwingUtilities.getWindowAncestor(this);
+                    if (mainFrame != null && mainFrame.getAutoOrderService() != null) {
+                        mainFrame.getAutoOrderService().reloadAutoOrdersFromDB();
+                    }
+                } else {
+                    JOptionPane.showMessageDialog(this, "예약 실패 (DB 오류)");
+                }
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(this, "가격과 수량을 숫자로 정확히 입력해주세요.");
+            }
+        });
+
+        p.add(btnSubmit);
+        return p;
     }
 }

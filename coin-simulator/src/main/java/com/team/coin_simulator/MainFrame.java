@@ -80,6 +80,9 @@ public class MainFrame extends JFrame {
     // 알림 감시자
     private PriceAlertService alertService;
     private JButton btnAlert;
+    
+    //자동 매매 엔진
+    private com.team.coin_simulator.Market_Order.AutoOrderService autoOrderService;
 
     // 백테스팅 UI / 어댑터
     private BacktestTimeControlPanel backtestControlPanel;
@@ -114,6 +117,8 @@ public class MainFrame extends JFrame {
         setLocationRelativeTo(null);
 
         alertService = new PriceAlertService(this, this.currentUserId);
+        
+        autoOrderService = new com.team.coin_simulator.Market_Order.AutoOrderService(this, currentUserId, currentSessionId);
         
         initComponents();
         initWebSocket(); // 앱 시작 시 항상 실시간 WebSocket 연결
@@ -450,6 +455,9 @@ public class MainFrame extends JFrame {
         if (alertService != null) {
             DAO.UpbitWebSocketDao.getInstance().addListener(alertService);
         }
+        if (autoOrderService != null) {
+            DAO.UpbitWebSocketDao.getInstance().addListener(autoOrderService);
+        }
     }
 
     private void updateOrderBookPanel(String coinSymbol) {
@@ -505,5 +513,9 @@ public class MainFrame extends JFrame {
         }
 
         SwingUtilities.invokeLater(() -> new MainFrame("test_user1"));
+    }
+    //OrderPanel에서 자동 매매 엔진을 가져갈 수 있게 해주는 메서드
+    public com.team.coin_simulator.Market_Order.AutoOrderService getAutoOrderService() {
+        return this.autoOrderService;
     }
 }
