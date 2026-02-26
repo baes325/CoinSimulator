@@ -421,7 +421,7 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
 
             if (orderDAO.insertOrder(order)) {
                 JOptionPane.showMessageDialog(this, "지정가 주문 접수 완료");
-                refreshDBData(); // 💡 주문 접수 후 DB 새로고침
+                refreshDBData(); // 주문 접수 후 DB 새로고침
             } else throw new RuntimeException("데이터베이스 저장에 실패했습니다.");
         } catch (Exception e) { JOptionPane.showMessageDialog(this, "주문 오류: " + e.getMessage(), "알림", JOptionPane.ERROR_MESSAGE); }
     }
@@ -693,64 +693,94 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
         p.setBackground(Color.WHITE);
 
         // 상단 안내
-        JLabel lblTitle = new JLabel("특수 예약 주문 (Stop-Loss / Take-Profit)");
-        lblTitle.setFont(new Font("맑은 고딕", Font.BOLD, 14));
-        lblTitle.setAlignmentX(Component.CENTER_ALIGNMENT);
-        p.add(lblTitle);
-        p.add(Box.createVerticalStrut(20));
-        //현재 코인과 가격을 띄워줄 전용 라벨
         lblAutoCoinInfo = new JLabel("비트코인 (BTC)");
         lblAutoCoinInfo.setFont(new Font("맑은 고딕", Font.BOLD, 16));
-        lblAutoCoinInfo.setForeground(new Color(155, 89, 182)); // 보라색으로 깔맞춤
         lblAutoCoinInfo.setAlignmentX(Component.CENTER_ALIGNMENT);
         p.add(lblAutoCoinInfo);
         p.add(Box.createVerticalStrut(20));
 
-        // 폼 영역 (GridLayout)
-        JPanel formPanel = new JPanel(new GridLayout(4, 2, 5, 15));
+        // 가격 및 수량 필드
+        JPanel formPanel = new JPanel(new GridLayout(2, 2, 5, 15));
         formPanel.setBackground(Color.WHITE);
-        formPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 160));
+        formPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 80));
 
-        formPanel.add(new JLabel("목표 가격 (KRW):"));
-        JTextField tfTargetPrice = new JTextField(); styleField(tfTargetPrice);
+        formPanel.add(new JLabel("목표 가격 (KRW)"));
+        JTextField tfTargetPrice = new JTextField(); 
+        styleField(tfTargetPrice);
         formPanel.add(tfTargetPrice);
 
-        formPanel.add(new JLabel("주문 수량 (개):"));
-        JTextField tfVolume = new JTextField(); styleField(tfVolume);
+        formPanel.add(new JLabel("주문 수량 (개)"));
+        JTextField tfVolume = new JTextField(); 
+        styleField(tfVolume);
         formPanel.add(tfVolume);
 
-        formPanel.add(new JLabel("조건 및 방향:"));
-        JPanel comboPanel = new JPanel(new GridLayout(1, 2, 5, 0));
-        JComboBox<String> cbCondition = new JComboBox<>(new String[]{"이상 (돌파)", "이하 (이탈)"});
-        JComboBox<String> cbSide = new JComboBox<>(new String[]{"매도 (팔기)", "매수 (사기)"});
-        comboPanel.add(cbCondition); comboPanel.add(cbSide);
-        formPanel.add(comboPanel);
-
         p.add(formPanel);
+        p.add(Box.createVerticalStrut(25));
+
+        //조건
+        JLabel lblCond = new JLabel("조건 선택");
+        lblCond.setFont(new Font("맑은 고딕", Font.BOLD, 13));
+        lblCond.setAlignmentX(Component.LEFT_ALIGNMENT);
+        p.add(lblCond);
+        p.add(Box.createVerticalStrut(10));
+
+        String[] conditions = {"▲ 가격이 목표가 이상(ABOVE)일 때", "▼ 가격이 목표가 이하(BELOW)일 때"};
+        JComboBox<String> cbCondition = new JComboBox<>(conditions);
+        cbCondition.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+        p.add(cbCondition);
+        p.add(Box.createVerticalStrut(25));
+
+        //매수/매도 방향 선택 (세로형 리스트 스타일)
+        JLabel lblSide = new JLabel("주문 방향 선택");
+        lblSide.setFont(new Font("맑은 고딕", Font.BOLD, 13));
+        lblSide.setAlignmentX(Component.LEFT_ALIGNMENT);
+        p.add(lblSide);
+        p.add(Box.createVerticalStrut(10));
+
+        // 세로 리스트를 위해 라디오 버튼 활용 (가장 직관적임)
+        JRadioButton rbAsk = new JRadioButton("시장가 매도 (팔기)");
+        JRadioButton rbBid = new JRadioButton("시장가 매수 (사기)");
+        rbAsk.setBackground(Color.WHITE);
+        rbBid.setBackground(Color.WHITE);
+        rbAsk.setFont(new Font("맑은 고딕", Font.PLAIN, 14));
+        rbBid.setFont(new Font("맑은 고딕", Font.PLAIN, 14));
+        rbAsk.setSelected(true); // 기본값 매도
+
+        ButtonGroup group = new ButtonGroup();
+        group.add(rbAsk); group.add(rbBid);
+
+        JPanel sidePanel = new JPanel();
+        sidePanel.setLayout(new BoxLayout(sidePanel, BoxLayout.Y_AXIS));
+        sidePanel.setBackground(Color.WHITE);
+        sidePanel.add(rbAsk);
+        sidePanel.add(Box.createVerticalStrut(10));
+        sidePanel.add(rbBid);
+        sidePanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        p.add(sidePanel);
+
         p.add(Box.createVerticalGlue());
 
-        // 하단 예약 버튼
+        //예약 주문 버튼
         JButton btnSubmit = new JButton("특수 주문 예약하기");
-        btnSubmit.setFont(new Font("맑은 고딕", Font.BOLD, 16));
+        btnSubmit.setFont(new Font("맑은 고딕", Font.BOLD, 18));
         btnSubmit.setBackground(new Color(155, 89, 182)); // 보라색
         btnSubmit.setForeground(Color.WHITE);
         btnSubmit.setFocusPainted(false);
         btnSubmit.setOpaque(true);
         btnSubmit.setBorderPainted(false);
-        btnSubmit.setMaximumSize(new Dimension(Integer.MAX_VALUE, 50));
+        btnSubmit.setMaximumSize(new Dimension(Integer.MAX_VALUE, 55));
         btnSubmit.setAlignmentX(Component.CENTER_ALIGNMENT);
 
         btnSubmit.addActionListener(e -> {
             try {
                 BigDecimal target = new BigDecimal(tfTargetPrice.getText().replace(",", "").trim());
                 BigDecimal vol = new BigDecimal(tfVolume.getText().replace(",", "").trim());
-
                 if (vol.compareTo(BigDecimal.ZERO) <= 0) {
                     JOptionPane.showMessageDialog(this, "수량은 0보다 커야 합니다."); return;
                 }
 
                 String cond = cbCondition.getSelectedIndex() == 0 ? "ABOVE" : "BELOW";
-                String side = cbSide.getSelectedIndex() == 0 ? "ASK" : "BID";
+                String side = rbAsk.isSelected() ? "ASK" : "BID"; // 라디오 버튼 상태 체크
 
                 DAO.AutoOrderDAO autoOrderDAO = new DAO.AutoOrderDAO();
                 DTO.AutoOrderDTO dto = new DTO.AutoOrderDTO();
@@ -763,19 +793,16 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
                 dto.setSide(side);
 
                 if (autoOrderDAO.insertAutoOrder(dto)) {
-                    JOptionPane.showMessageDialog(this, "특수 주문 예약 완료!\n목표가 도달 시 시장가로 체결됩니다.");
+                    JOptionPane.showMessageDialog(this, "특수 주문이 예약되었습니다!");
                     tfTargetPrice.setText(""); tfVolume.setText("");
                     
-                    // MainFrame의 엔진 갱신
                     com.team.coin_simulator.MainFrame mainFrame = (com.team.coin_simulator.MainFrame) SwingUtilities.getWindowAncestor(this);
                     if (mainFrame != null && mainFrame.getAutoOrderService() != null) {
                         mainFrame.getAutoOrderService().reloadAutoOrdersFromDB();
                     }
-                } else {
-                    JOptionPane.showMessageDialog(this, "예약 실패 (DB 오류)");
                 }
             } catch (Exception ex) {
-                JOptionPane.showMessageDialog(this, "가격과 수량을 숫자로 정확히 입력해주세요.");
+                JOptionPane.showMessageDialog(this, "가격을 정확히 입력해주세요.");
             }
         });
 

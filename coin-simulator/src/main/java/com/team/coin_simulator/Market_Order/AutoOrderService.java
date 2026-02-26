@@ -78,7 +78,7 @@ public class AutoOrderService implements UpbitWebSocketDao.TickerListener {
         }
     }
 
-    // 💡 방아쇠를 당겨 실제 매매를 진행하는 메서드
+    // 실제 매매를 진행하는 메서드
     private void executeMarketOrderNow(AutoOrderDTO autoOrder, BigDecimal currentPrice) {
         OrderDTO executionOrder = new OrderDTO();
         executionOrder.setOrderId(System.currentTimeMillis()); // 고유 주문번호 생성
