@@ -135,9 +135,9 @@ public class DownloadDatabase {
             return;
         }
 
-        // [핵심 수정] 마지막 데이터가 미완성 캔들일 수 있으므로, 캔들 단위(dbUnit)의 2배만큼 시간을 빼서 중복 조회합니다.
+        // 미완성 캔들 덮어쓰기를 위해 캔들 단위의 2배만큼 시간을 되돌려 조회
         LocalDateTime overlapDate = lastSavedDate.minusMinutes(type.dbUnit * 2L);
-        System.out.println(" ↳ 덮어쓰기 기준 시간: " + overlapDate.format(FORMATTER));
+        System.out.println(" ↳ 마지막 저장 시간: " + lastSavedDate.format(FORMATTER) + " (덮어쓰기 기준: " + overlapDate.format(FORMATTER) + ")");
 
         String  toDate     = "";
         boolean isFinished = false;
@@ -146,7 +146,7 @@ public class DownloadDatabase {
         try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(buildInsertSql())) {
 
-            conn.setAutoCommit(false);
+            conn.setAutoCommit(false); // 트랜잭션 시작
 
             while (!isFinished) {
                 try {
@@ -159,7 +159,6 @@ public class DownloadDatabase {
                         String     utcRaw = c.getString("candle_date_time_utc");
                         LocalDateTime date = parseUtc(utcRaw);
 
-                        // 기존 lastSavedDate 대신 넉넉하게 당겨둔 overlapDate를 기준으로 갱신 중단
                         if (!date.isAfter(overlapDate)) {
                             isFinished = true;
                             break;
@@ -173,7 +172,7 @@ public class DownloadDatabase {
                     if (batchCount > 0) {
                         pstmt.executeBatch();
                         pstmt.clearBatch();
-                        conn.commit(); // 배치 단위 즉시 커밋
+                        // 주의: 여기서 커밋하지 않습니다. 루프 중간에 실패하면 섬(Island) 데이터가 남기 때문입니다.
                         totalSaved += batchCount;
                         System.out.print(".");
                     }
@@ -186,12 +185,16 @@ public class DownloadDatabase {
 
                 } catch (Exception e) {
                     if (handleRateLimitException(e, market)) continue;
-                    System.err.println("\n[Error] " + market + " 업데이트 중단: " + e.getMessage());
+                    System.err.println("\n[Error] " + market + " 업데이트 중단 (전체 롤백됨): " + e.getMessage());
                     try { conn.rollback(); } catch (SQLException ex) { ex.printStackTrace(); }
-                    break;
+                    // 에러 발생 시 커밋하지 않고 메서드를 종료하여 데이터 꼬임을 방지합니다.
+                    return; 
                 }
             }
-            System.out.println(" 완료 (갱신 및 추가: " + totalSaved + "개)");
+            
+            // 모든 빈 구간을 과거 데이터까지 성공적으로 연결했을 때만 최종 커밋 (Atomicity 보장)
+            conn.commit();
+            System.out.println(" 완료 (안전하게 갱신 및 추가: " + totalSaved + "개)");
 
         } catch (Exception e) {
             e.printStackTrace();
