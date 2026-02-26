@@ -731,10 +731,13 @@ public class CandleChartPanel extends JPanel {
      * 외부(WebSocket 콜백 등)에서 현재가를 주입합니다.
      * 백테스팅 모드에서는 무시됩니다.
      */
-    public void setLatestPriceFromWebSocket(double price, long serverTimestamp) {
+    public void setLatestPriceFromWebSocket(String wsMarket, double price) {
         if (backtestTargetTime != null) return;
+        
+        // 추가: 현재 종목과 웹소켓에서 온 종목이 다르면 가격 업데이트 무시
+        if (!this.currentMarket.equals(wsMarket)) return; 
+        
         this.latestLivePrice = price;
-        this.latestLiveTimestamp = serverTimestamp; // 서버 시간 갱신
     }
 
     /**
@@ -859,6 +862,11 @@ public class CandleChartPanel extends JPanel {
         this.currentMarket = "KRW-" + coinSymbol;
         liveCandle = null;
         liveCandleMinuteStart = null;
+        
+        // 추가: 이전 코인의 가격 및 시간 정보 초기화
+        this.latestLivePrice = -1;
+        this.latestLiveTimestamp = -1;
+        
         refreshChart();
         if (backtestTargetTime == null) {
             connectWebSocket();
