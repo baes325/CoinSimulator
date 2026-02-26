@@ -134,7 +134,10 @@ public class DownloadDatabase {
             crawlCoinHistory(market, type, LocalDateTime.now().minusMonths(6));
             return;
         }
-        System.out.println(" ↳ 마지막 저장 시간: " + lastSavedDate.format(FORMATTER));
+
+        // [핵심 수정] 마지막 데이터가 미완성 캔들일 수 있으므로, 캔들 단위(dbUnit)의 2배만큼 시간을 빼서 중복 조회합니다.
+        LocalDateTime overlapDate = lastSavedDate.minusMinutes(type.dbUnit * 2L);
+        System.out.println(" ↳ 덮어쓰기 기준 시간: " + overlapDate.format(FORMATTER));
 
         String  toDate     = "";
         boolean isFinished = false;
@@ -156,7 +159,8 @@ public class DownloadDatabase {
                         String     utcRaw = c.getString("candle_date_time_utc");
                         LocalDateTime date = parseUtc(utcRaw);
 
-                        if (!date.isAfter(lastSavedDate)) {
+                        // 기존 lastSavedDate 대신 넉넉하게 당겨둔 overlapDate를 기준으로 갱신 중단
+                        if (!date.isAfter(overlapDate)) {
                             isFinished = true;
                             break;
                         }
@@ -169,7 +173,7 @@ public class DownloadDatabase {
                     if (batchCount > 0) {
                         pstmt.executeBatch();
                         pstmt.clearBatch();
-                        conn.commit(); // 배치 단위 즉시 커밋 (데이터 유실 방지)
+                        conn.commit(); // 배치 단위 즉시 커밋
                         totalSaved += batchCount;
                         System.out.print(".");
                     }
@@ -177,7 +181,6 @@ public class DownloadDatabase {
                     if (!isFinished) {
                         JSONObject oldest = candles.getJSONObject(candles.length() - 1);
                         LocalDateTime oldestTime = parseUtc(oldest.getString("candle_date_time_utc"));
-                        // 무한 루프 방지: 가장 오래된 시간에서 1초 차감 후 다음 페이지 요청
                         toDate = oldestTime.minusSeconds(1).format(API_FORMATTER) + "Z";
                     }
 
@@ -188,7 +191,7 @@ public class DownloadDatabase {
                     break;
                 }
             }
-            System.out.println(" 완료 (새로 추가: " + totalSaved + "개)");
+            System.out.println(" 완료 (갱신 및 추가: " + totalSaved + "개)");
 
         } catch (Exception e) {
             e.printStackTrace();
