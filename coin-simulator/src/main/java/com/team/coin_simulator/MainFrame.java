@@ -518,4 +518,21 @@ public class MainFrame extends JFrame {
     public com.team.coin_simulator.Market_Order.AutoOrderService getAutoOrderService() {
         return this.autoOrderService;
     }
+    
+    public void refreshAllPanels() {
+        SwingUtilities.invokeLater(() -> {
+            // 1. 주문 패널 (하단 잔고 등) 새로고침
+            // (주의: orderPanel 변수명은 회원님의 MainFrame에 선언된 이름에 맞게 수정해주세요!)
+            if (this.orderPanel != null) {
+                // orderPanel을 갱신하는 메서드 호출 (보통 세션을 다시 세팅하거나 refresh 메서드 호출)
+                // this.orderPanel.setSessionId(currentSessionId); 
+            }
+
+            // 2. 투자내역 패널 새로고침
+            // (주의: investmentPanel 변수명은 회원님의 MainFrame에 선언된 이름에 맞게 수정해주세요!)
+            if (this.investmentPanel != null) {
+                this.investmentPanel.refreshAll();
+            }
+        });
+    }
 }

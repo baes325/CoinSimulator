@@ -115,19 +115,24 @@ public class OrderDAO {
             }
 
             String currency = side.equals("BID") ? "KRW" : market.replace("KRW-", "");
+            
+            // 🚀 [핵심 수술 지점] 파라미터로 넘어온 amount의 미세한 소수점 먼지를 버림(DOWN) 처리!
+            BigDecimal safeAmount = amount.setScale(8, java.math.RoundingMode.DOWN);
+
             String refundAssetSql = "UPDATE assets SET balance = balance + ?, locked = locked - ? " +
                                     "WHERE user_id = ? AND session_id = ? AND currency = ? AND locked >= ?";
 
             try (PreparedStatement pstmt = conn.prepareStatement(refundAssetSql)) {
-                pstmt.setBigDecimal(1, amount);
-                pstmt.setBigDecimal(2, amount);
+                // 💡 amount 대신 먼지를 털어낸 safeAmount를 넣어줍니다!
+                pstmt.setBigDecimal(1, safeAmount);
+                pstmt.setBigDecimal(2, safeAmount);
                 pstmt.setString(3, userId);
                 pstmt.setLong(4, sessionId);
                 pstmt.setString(5, currency);
-                pstmt.setBigDecimal(6, amount); 
+                pstmt.setBigDecimal(6, safeAmount); 
 
                 if (pstmt.executeUpdate() == 0) {
-                    throw new SQLException("자산 복구에 실패했습니다. (금고에 돈이 부족함)");
+                    throw new SQLException("자산 복구에 실패했습니다. (금고 부족 / 요청액: " + safeAmount + ")");
                 }
             }
 

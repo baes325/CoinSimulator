@@ -1,9 +1,10 @@
 package com.team.coin_simulator.Market_Order;
 
 import DAO.OrderDAO;
-import DAO.AutoOrderDAO; // 💡 자동매매 DAO 추가
+import DAO.AutoOrderDAO; 
+import DAO.OpenOrderDAO;
 import DTO.OrderDTO;
-import DTO.AutoOrderDTO; // 💡 자동매매 DTO 추가
+import DTO.AutoOrderDTO; 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ItemEvent;
@@ -15,14 +16,15 @@ public class OrderEditListPanel extends JPanel {
     private String userId;
     private OrderDAO orderDAO;
     private AutoOrderDAO autoOrderDAO;
-    private Runnable onUpdateCallback; //메인 화면(OrderPanel)을 새로고침
+    private OpenOrderDAO openOrderDAO; // 💡 추가!
+    private Runnable onUpdateCallback; 
 
     private JComboBox<String> filterComboBox;
     private JPanel listContainer;
     private boolean isUpdatingComboBox = false;
 
     private List<OrderDTO> openOrders = new ArrayList<>();
-    private List<AutoOrderDTO> activeAutoOrders = new ArrayList<>(); // 자동매매 리스트 추가
+    private List<AutoOrderDTO> activeAutoOrders = new ArrayList<>(); 
     
     private Map<Long, String> orderCoinMap = new HashMap<>();
     private Map<String, BigDecimal> mockBalance = new HashMap<>();
@@ -37,7 +39,8 @@ public class OrderEditListPanel extends JPanel {
         this.userId = userId;
         this.onUpdateCallback = onUpdateCallback;
         this.orderDAO = new OrderDAO();
-        this.autoOrderDAO = new AutoOrderDAO(); // 초기화
+        this.autoOrderDAO = new AutoOrderDAO(); 
+        this.openOrderDAO = new OpenOrderDAO(); // 💡 초기화!
 
         setLayout(new BorderLayout());
         setBackground(Color.WHITE);
@@ -66,14 +69,12 @@ public class OrderEditListPanel extends JPanel {
         add(scrollPane, BorderLayout.CENTER);
     }
 
-    //메인 화면(OrderPanel)에서 최신 데이터를 던져줄 때 받는 곳
     public void updateData(List<OrderDTO> orders, Map<Long, String> coinMap, Map<String, BigDecimal> balances, Map<String, BigDecimal> lockeds) {
         this.openOrders = orders;
         this.orderCoinMap = coinMap;
         this.mockBalance = balances;
         this.mockLocked = lockeds;
 
-        //일반 주문을 받을 때, 내 예약 주문(AutoOrder)도 같이 DB에서 가져옵니다!
         long currentSessionId = com.team.coin_simulator.backtest.SessionManager.getInstance().getCurrentSessionId();
         this.activeAutoOrders = autoOrderDAO.getActiveAutoOrders(this.userId, currentSessionId);
 
@@ -83,7 +84,6 @@ public class OrderEditListPanel extends JPanel {
         for (OrderDTO o : openOrders) {
             activeCoins.add(orderCoinMap.getOrDefault(o.getOrderId(), "BTC"));
         }
-        //필터용 코인 목록에 예약 주문된 코인들도 추가!
         for (AutoOrderDTO ao : activeAutoOrders) {
             activeCoins.add(ao.getMarket().replace("KRW-", ""));
         }
@@ -103,16 +103,14 @@ public class OrderEditListPanel extends JPanel {
         }
         isUpdatingComboBox = false;
 
-        renderList(); // 데이터 갱신 후 화면 다시 그리기
+        renderList(); 
     }
 
-    // 리스트 그리기
     private void renderList() {
         listContainer.removeAll();
         String currentSelection = (String) filterComboBox.getSelectedItem();
         if (currentSelection == null) currentSelection = "전체";
 
-        // 1. 일반 미체결 주문 먼저 그리기
         for (OrderDTO order : openOrders) {
             String orderCoin = orderCoinMap.getOrDefault(order.getOrderId(), "BTC");
             if (currentSelection.equals("전체") || currentSelection.equals(orderCoin)) {
@@ -121,7 +119,6 @@ public class OrderEditListPanel extends JPanel {
             }
         }
         
-        // 2. 자동/예약 주문 이어서 그리기
         for (AutoOrderDTO autoOrder : activeAutoOrders) {
             String autoCoin = autoOrder.getMarket().replace("KRW-", "");
             if (currentSelection.equals("전체") || currentSelection.equals(autoCoin)) {
@@ -134,11 +131,9 @@ public class OrderEditListPanel extends JPanel {
         listContainer.repaint();
     }
 
-    //자동/예약 주문 전용 카드 생성
     private JPanel createAutoOrderItem(AutoOrderDTO order, String coinCode) {
         JPanel item = new JPanel(new BorderLayout(10, 5));
         item.setBackground(Color.WHITE);
-        // 일반 주문과 구분하기 위해 보라색 굵은 테두리 적용!
         item.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(COLOR_AUTO, 2),
                 BorderFactory.createEmptyBorder(10, 15, 10, 15)));
@@ -175,7 +170,6 @@ public class OrderEditListPanel extends JPanel {
         return item;
     }
 
-    // 예약 주문 취소 로직
     private void cancelAutoOrder(AutoOrderDTO order) {
         int confirm = JOptionPane.showConfirmDialog(this, "특수 예약 주문을 취소하시겠습니까?", "취소 확인", JOptionPane.YES_NO_OPTION);
         if (confirm == JOptionPane.YES_OPTION) {
@@ -183,20 +177,21 @@ public class OrderEditListPanel extends JPanel {
             if (isDBSuccess) {
                 JOptionPane.showMessageDialog(this, "예약 주문이 정상적으로 취소되었습니다.");
                 
-                // 취소 후 메인 프레임의 엔진에게 "예약 빠졌으니 다시 로드해!" 라고 알려줍니다.
                 com.team.coin_simulator.MainFrame mainFrame = (com.team.coin_simulator.MainFrame) SwingUtilities.getWindowAncestor(this);
-                if (mainFrame != null && mainFrame.getAutoOrderService() != null) {
-                    mainFrame.getAutoOrderService().reloadAutoOrdersFromDB();
+                if (mainFrame != null) {
+                    if (mainFrame.getAutoOrderService() != null) {
+                        mainFrame.getAutoOrderService().reloadAutoOrdersFromDB();
+                    }
+                    mainFrame.refreshAllPanels();
                 }
                 
-                // UI 새로고침
                 if (onUpdateCallback != null) onUpdateCallback.run(); 
             } else {
                 JOptionPane.showMessageDialog(this, "취소 처리에 실패했습니다. (이미 체결되었을 수 있습니다.)", "오류", JOptionPane.ERROR_MESSAGE);
             }
         }
     }
-    //일반 주문 카드 생성
+
     private JPanel createOrderItem(OrderDTO order, String coinCode) {
         JPanel item = new JPanel(new BorderLayout(10, 5));
         item.setBackground(Color.WHITE);
@@ -239,29 +234,30 @@ public class OrderEditListPanel extends JPanel {
         return item;
     }
 
-    //일반 취소 로직
+    // 🚀 [수술 완료] 일반 취소 로직 완벽 변경!
     private void cancelOrder(OrderDTO order, String coinCode) {
-        BigDecimal currentRemaining = order.getRemainingVolume();
-        BigDecimal lockedAmt;
-        if (order.getSide().equals("BID")) {
-            BigDecimal remainingCost = order.getOriginalPrice().multiply(currentRemaining);
-            BigDecimal fee = remainingCost.multiply(new BigDecimal("0.0005"));
-            lockedAmt = remainingCost.add(fee);
-        } else {
-            lockedAmt = currentRemaining;
-        }
+        int confirm = JOptionPane.showConfirmDialog(this, "주문을 취소하시겠습니까?", "취소 확인", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION) return;
 
-        boolean isDBSuccess = orderDAO.cancelOrder(order.getOrderId(), this.userId, order.getSide(), lockedAmt);
+        // 💡 프론트에서 복잡하게 돈 계산할 필요 없음! 우리가 만든 완벽한 OpenOrderDAO 출격!
+        boolean isDBSuccess = openOrderDAO.cancelOrder(order.getOrderId());
         
         if (isDBSuccess) {
             JOptionPane.showMessageDialog(this, "주문이 취소되었습니다.");
+            
+            // UI 리스트 새로고침
             if (onUpdateCallback != null) onUpdateCallback.run(); 
+            
+            // 🚀 핵심: 하단 잔고와 투자내역 화면까지 싹 다 동기화 명령!
+            com.team.coin_simulator.MainFrame mainFrame = (com.team.coin_simulator.MainFrame) SwingUtilities.getWindowAncestor(this);
+            if (mainFrame != null) {
+                mainFrame.refreshAllPanels(); 
+            }
         } else {
             JOptionPane.showMessageDialog(this, "취소 처리에 실패했습니다. (이미 체결되었을 수 있습니다.)", "오류", JOptionPane.ERROR_MESSAGE);
         }
     }
 
-    //일반 정정 로직
     private void showModifyDialog(OrderDTO order, String coinCode) {
         JPanel panel = new JPanel(new GridLayout(2, 2, 5, 5));
         JTextField txtPrice = new JTextField(order.getOriginalPrice().toString());
@@ -289,6 +285,12 @@ public class OrderEditListPanel extends JPanel {
                 if (orderDAO.modifyOrder(order.getOrderId(), this.userId, order.getSide(), oldLockedAmt, newRequiredAmt, newPrice, newQty)) {
                     JOptionPane.showMessageDialog(this, "주문이 정정되었습니다.");
                     if (onUpdateCallback != null) onUpdateCallback.run(); 
+                    
+                    // 🚀 정정 후에도 전체 화면 동기화!
+                    com.team.coin_simulator.MainFrame mainFrame = (com.team.coin_simulator.MainFrame) SwingUtilities.getWindowAncestor(this);
+                    if (mainFrame != null) {
+                        mainFrame.refreshAllPanels(); 
+                    }
                 }
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, "정정 실패: " + ex.getMessage(), "오류", JOptionPane.ERROR_MESSAGE);
