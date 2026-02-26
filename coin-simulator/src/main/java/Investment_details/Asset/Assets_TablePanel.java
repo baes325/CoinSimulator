@@ -145,12 +145,18 @@ public class Assets_TablePanel extends JPanel {
             table.getColumnModel().getColumn(i).setPreferredWidth(w[i]);
     }
 
-    // ── 데이터 업데이트 ───────────────────────────────────────────
+ // ── 데이터 업데이트 ───────────────────────────────────────────
     public void updateTable(List<MyAssetStatusDTO> list) {
         tableModel.setRowCount(0);
         if (list == null) return;
 
         for (MyAssetStatusDTO dto : list) {
+            // [수정된 부분] 보유 수량이 null이거나 소수점 8자리까지 확인 시 0인 경우 표출하지 않음
+            if (dto.getBalance() == null || 
+                dto.getBalance().setScale(8, java.math.RoundingMode.DOWN).compareTo(java.math.BigDecimal.ZERO) == 0) {
+                continue;
+            }
+
             double pnlRate = dto.getProfitRate();
             String pnlStr  = String.format("%+.2f %%", pnlRate);
 
