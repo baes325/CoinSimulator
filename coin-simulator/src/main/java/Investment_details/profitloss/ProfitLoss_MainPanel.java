@@ -134,6 +134,11 @@ public class ProfitLoss_MainPanel extends JPanel {
     // ── 외부 API ─────────────────────────────────────────────────
 
     /** 외부에서 데이터 새로고침 */
+    public void refresh() {
+        loadRecentData(currentDays);
+    }
+
+    /** 외부에서 데이터 새로고침 (기존 메서드) */
     public void refresh(int days) {
         loadRecentData(days);
     }

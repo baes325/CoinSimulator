@@ -7,6 +7,7 @@ import java.awt.Color;
 import javax.swing.JFrame;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 
 import Investment_details.Asset.Asset_MainPanel;
 import Investment_details.OpenOrder.OpenOrder_MainPanel;
@@ -50,6 +51,9 @@ public class Investment_details_MainPanel extends JPanel {
     private static final String CARD_PROFIT_LOSS = "PROFIT_LOSS";
     private static final String CARD_HISTORY     = "HISTORY";
     private static final String CARD_OPEN_ORDER  = "OPEN_ORDER";
+    
+    private String currentActiveCard = CARD_ASSET; 
+    private Timer autoRefreshTimer;
 
     public Investment_details_MainPanel(String userId, long sessionId) {
         this.userId    = userId;
@@ -82,30 +86,59 @@ public class Investment_details_MainPanel extends JPanel {
 
         // 기본 화면: 보유자산
         cardLayout.show(contentPanel, CARD_ASSET);
+        
+        // [추가] 1초 주기 자동 갱신 타이머 실행
+        setupAutoRefreshTimer();
     }
 
     // ── 탭 리스너 설정 ────────────────────────────────────────────
 
+ // ── 탭 리스너 설정 (수정) ────────────────────────────────────────────
     private void setupTabListeners() {
         navPanel.addAssetTabListener(e -> {
+            currentActiveCard = CARD_ASSET; // 상태 업데이트
             cardLayout.show(contentPanel, CARD_ASSET);
             assetPanel.initAssetData();
         });
 
         navPanel.addProfitLossTabListener(e -> {
+            currentActiveCard = CARD_PROFIT_LOSS; // 상태 업데이트
             cardLayout.show(contentPanel, CARD_PROFIT_LOSS);
-            profitLossPanel.refresh(30);
+            profitLossPanel.refresh(); // 인자 없는 refresh() 호출로 변경
         });
 
         navPanel.addHistoryTabListener(e -> {
+            currentActiveCard = CARD_HISTORY; // 상태 업데이트
             cardLayout.show(contentPanel, CARD_HISTORY);
             historyPanel.refresh();
         });
 
         navPanel.addOpenOrderTabListener(e -> {
+            currentActiveCard = CARD_OPEN_ORDER; // 상태 업데이트
             cardLayout.show(contentPanel, CARD_OPEN_ORDER);
             openOrderPanel.refresh();
         });
+    }
+    
+    
+    private void setupAutoRefreshTimer() {
+        autoRefreshTimer = new Timer(1000, e -> {
+            switch (currentActiveCard) {
+                case CARD_ASSET:
+                    assetPanel.initAssetData();
+                    break;
+                case CARD_PROFIT_LOSS:
+                    profitLossPanel.refresh(); 
+                    break;
+                case CARD_HISTORY:
+                    historyPanel.refresh();
+                    break;
+                case CARD_OPEN_ORDER:
+                    openOrderPanel.refresh();
+                    break;
+            }
+        });
+        autoRefreshTimer.start();
     }
 
     // ── 외부 API ─────────────────────────────────────────────────

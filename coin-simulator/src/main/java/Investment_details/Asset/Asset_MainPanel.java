@@ -1,33 +1,34 @@
 package Investment_details.Asset;
 
 import DAO.AssetDAO;
+import DAO.HistoricalDataDAO;
 import DAO.UpbitWebSocketDao;
 import DTO.AssetDTO;
 import DTO.MyAssetStatusDTO;
+import DTO.TickerDto;
+import com.team.coin_simulator.backtest.BacktestSpeed;
+import com.team.coin_simulator.backtest.BacktestTimeController;
 
 import javax.swing.*;
 import java.awt.*;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 보유자산 메인 패널 (업비트 스타일)
- *
- * 레이아웃:
- * ┌─────────────────────────────────────────────┐
- * │  Asset_SummaryPanel  (NORTH - 상단 요약)     │
- * ├─────────────────────────────────────────────┤
- * │  Assets_TablePanel   (CENTER - 보유목록)     │
- * └─────────────────────────────────────────────┘
+ * 실시간 웹소켓 및 백테스트 시간 엔진 연동
  */
-public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerListener {
+public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerListener, BacktestTimeController.BacktestTickListener {
 
     private final Asset_SummaryPanel summaryPanel;
     private final Assets_TablePanel  tablePanel;
 
     private final AssetDAO assetDAO;
+    private final HistoricalDataDAO historicalDataDAO; // [추가] 과거 데이터 조회용 DAO
     private final String   userId;
     private long sessionId;
 
@@ -38,6 +39,7 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
         this.userId = userId;
         this.sessionId = sessionId;
         this.assetDAO = new AssetDAO();
+        this.historicalDataDAO = new HistoricalDataDAO(); // [추가] 초기화
 
         setLayout(new BorderLayout(0, 0));
         setBackground(Color.WHITE);
@@ -48,13 +50,15 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
         add(summaryPanel, BorderLayout.NORTH);
         add(tablePanel,   BorderLayout.CENTER);
 
-        // 웹소켓 리스너 등록
+        // 이벤트 리스너 등록
         UpbitWebSocketDao.getInstance().addListener(this);
+        BacktestTimeController.getInstance().addTickListener(this); // [추가] 백테스트 틱 리스너 등록
 
         // 초기 DB 데이터 로드
         initAssetData();
     }
-    // 세션 ID 업데이트 메서드 추가
+    
+    // 세션 ID 업데이트 메서드
     public void setSessionId(long sessionId) {
         this.sessionId = sessionId;
     }
@@ -77,7 +81,7 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
             dto.setBalance(asset.getTotalAmount());
             dto.setAvgPrice(asset.getAvgBuyPrice() != null ? asset.getAvgBuyPrice() : BigDecimal.ZERO);
 
-            // 초기 현재가 = 평단가 (웹소켓으로 갱신 전)
+            // 초기 현재가 = 평단가 (웹소켓/백테스트 갱신 전 임시값)
             BigDecimal initPrice = asset.getAvgBuyPrice() != null ? asset.getAvgBuyPrice() : BigDecimal.ZERO;
             dto.setCurrentPrice(initPrice);
             dto.setTotalValue(dto.getBalance().multiply(initPrice));
@@ -88,14 +92,23 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
         refreshUI();
     }
 
-    
-    // ── 웹소켓 콜백 ───────────────────────────────────────────────
+    // ── 실시간 웹소켓 콜백 ─────────────────────────────────────────
     @Override
     public void onTickerUpdate(String symbol, String priceStr, String flucStr, String accPriceStr, String tradeVolumeStr) {
-        boolean related = myAssetList.stream().anyMatch(d -> d.getCurrency().equals(symbol));
-        if (related) {
-            SwingUtilities.invokeLater(this::refreshUI);
+        // 백테스트 중이 아닐 때만 웹소켓 이벤트 처리
+        if (!BacktestTimeController.getInstance().isRunning()) {
+            boolean related = myAssetList.stream().anyMatch(d -> d.getCurrency().equals(symbol));
+            if (related) {
+                SwingUtilities.invokeLater(this::refreshUI);
+            }
         }
+    }
+
+    // ── [추가] 백테스트 틱 콜백 ────────────────────────────────────
+    @Override
+    public void onTick(LocalDateTime currentSimTime, BacktestSpeed speed) {
+        // 백테스트 엔진에서 1틱(1초) 진행될 때마다 UI 갱신 요청
+        SwingUtilities.invokeLater(this::refreshUI);
     }
 
     // ── UI 전체 갱신 ──────────────────────────────────────────────
@@ -103,10 +116,32 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
         BigDecimal totalEval = BigDecimal.ZERO;
         BigDecimal totalBuy  = BigDecimal.ZERO;
 
+        // [추가] 현재 백테스트 모드인지 확인 및 과거 가격 조회
+        boolean isBacktesting = BacktestTimeController.getInstance().isRunning();
+        Map<String, TickerDto> backtestPrices = null;
+        
+        if (isBacktesting) {
+            LocalDateTime simTime = BacktestTimeController.getInstance().getCurrentSimTime();
+            if (simTime != null) {
+                backtestPrices = historicalDataDAO.getTickersAtTime(simTime);
+            }
+        }
+
         for (MyAssetStatusDTO dto : myAssetList) {
-            // 최신 현재가
-            String market = "KRW-" + dto.getCurrency();
-            BigDecimal cur = UpbitWebSocketDao.getCurrentPrice(market);
+            BigDecimal cur = null;
+
+            // [변경] 분기 처리: 백테스트 중이면 DB 과거 데이터, 아니면 웹소켓 실시간 데이터 사용
+            if (isBacktesting && backtestPrices != null) {
+                TickerDto ticker = backtestPrices.get(dto.getCurrency());
+                if (ticker != null) {
+                    cur = BigDecimal.valueOf(ticker.getTrade_price());
+                }
+            } else {
+                String market = "KRW-" + dto.getCurrency();
+                cur = UpbitWebSocketDao.getCurrentPrice(market);
+            }
+
+            // 현재가 갱신 및 계산
             if (cur != null && cur.compareTo(BigDecimal.ZERO) > 0) {
                 dto.setCurrentPrice(cur);
             }
@@ -115,7 +150,7 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
             BigDecimal buy  = dto.getBalance().multiply(dto.getAvgPrice());
             dto.setTotalValue(eval);
 
-            // 수익률
+            // 수익률 계산
             if (dto.getAvgPrice().compareTo(BigDecimal.ZERO) > 0) {
                 BigDecimal diff = dto.getCurrentPrice().subtract(dto.getAvgPrice());
                 double rate = diff.divide(dto.getAvgPrice(), 6, RoundingMode.HALF_UP).doubleValue() * 100;
@@ -150,20 +185,4 @@ public class Asset_MainPanel extends JPanel implements UpbitWebSocketDao.TickerL
         revalidate();
         repaint();
     }
-
-    // ── 독립 테스트 ───────────────────────────────────────────────
-//    public static void main(String[] args) {
-//        SwingUtilities.invokeLater(() -> {
-//            JFrame frame = new JFrame("보유자산 테스트");
-//            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-//            frame.setSize(1100, 700);
-//            frame.setLocationRelativeTo(null);
-//
-//            Asset_MainPanel panel = new Asset_MainPanel("user_01");
-//            frame.add(panel);
-//            frame.setVisible(true);
-//
-//            UpbitWebSocketDao.getInstance().start();
-//        });
-//    }
 }
