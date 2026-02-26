@@ -369,7 +369,7 @@ public class OrderDAO {
             if (conn != null) try { conn.rollback(); } catch (SQLException ex) {}
             System.err.println(">> [자동 체결 오류] " + e.getMessage());
         } finally {
-            if (conn != null) try { conn.close(); } catch (SQLException ex) {}
+        	if (conn != null) try { conn.close(); } catch (Exception ex) {}
         }
 
         return executedList;

@@ -467,7 +467,7 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
         }
     }
 
-    // 💡 [master 장점] 지정가 폼 (버튼 팩 추가)
+    //지정가 폼 (버튼 팩 추가)
     private JPanel createLimitForm() {
         JPanel p = new JPanel(); 
         p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS)); 
@@ -481,6 +481,7 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
         priceRow.setBackground(Color.WHITE);
         priceRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
         
+        priceRow.setAlignmentX(Component.LEFT_ALIGNMENT);
         priceField = new JTextField(); styleField(priceField);
         priceRow.add(priceField, BorderLayout.CENTER);
         
@@ -508,6 +509,7 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
         JPanel qtyRow = new JPanel(new BorderLayout()); 
         qtyRow.setBackground(Color.WHITE);
         qtyRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+        qtyRow.setAlignmentX(Component.LEFT_ALIGNMENT);
         qtyField = new JTextField(); styleField(qtyField); 
         qtyRow.add(qtyField, BorderLayout.CENTER);
         p.add(qtyRow);
@@ -518,7 +520,7 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
         return p;
     }
 
-    // 💡 [master 장점] 시장가 폼 (퍼센트 추가)
+    //시장가 폼 (퍼센트 추가)
     private JPanel createMarketForm() {
         JPanel p = new JPanel(); 
         p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS)); 
@@ -660,5 +662,9 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
             updateOrderSummary(); 
             
         } catch (Exception ex) {}
+    }
+    //MainFrame에서 알림창 띄울 때 현재가를 가져가기 위한 메서드
+    public BigDecimal getCurrentSelectedPrice() {
+        return this.currentSelectedPrice;
     }
 }

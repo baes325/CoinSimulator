@@ -7,6 +7,7 @@ import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.math.BigDecimal;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -111,11 +112,11 @@ public class MainFrame extends JFrame {
         setSize(1600, 900);
         setLocationRelativeTo(null);
 
+        alertService = new PriceAlertService(this, this.currentUserId);
+        
         initComponents();
         initWebSocket(); // 앱 시작 시 항상 실시간 WebSocket 연결
-
-        alertService = new PriceAlertService(this);
-
+        
         setVisible(true);
         syncMarketDataBackground();
     }
@@ -228,6 +229,38 @@ public class MainFrame extends JFrame {
 
         btnProfile.addActionListener(e -> openProfile());
         buttonPanel.add(btnProfile);
+        
+        //가격 알림 설정 버튼
+        JButton btnAlert = new JButton("알림 설정");
+        btnAlert.setFont(new Font("맑은 고딕", Font.BOLD, 13));
+        btnAlert.setForeground(Color.WHITE);
+        btnAlert.setBackground(new Color(243, 156, 18)); // 예쁜 오렌지색!
+        btnAlert.setFocusPainted(false);
+        btnAlert.setBorderPainted(false);
+        btnAlert.setPreferredSize(new Dimension(110, 35));
+        btnAlert.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+
+        // 마우스 올렸을 때 색상 변화 효과
+        btnAlert.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseEntered(java.awt.event.MouseEvent evt) { btnAlert.setBackground(new Color(230, 126, 34)); }
+            public void mouseExited(java.awt.event.MouseEvent evt)  { btnAlert.setBackground(new Color(243, 156, 18)); }
+        });
+
+        // 버튼 클릭 시 팝업창 띄우기 로직
+        btnAlert.addActionListener(e -> {
+            // 1. 코인 이름에 "KRW-" 붙여주기 (예: BTC -> KRW-BTC)
+            String market = "KRW-" + currentCoinSymbol; 
+            
+            // 2. OrderPanel에서 현재가 훔쳐오기 (없으면 0원)
+            BigDecimal currentPrice = (orderPanel != null) ? orderPanel.getCurrentSelectedPrice() : BigDecimal.ZERO;
+            
+            //AlertDialog 띄우기 (자신, 코인명, 현재가, 유저ID, 알림서비스)
+            new com.team.coin_simulator.Alerts.AlertDialog(
+                MainFrame.this, market, currentPrice, currentUserId, alertService
+            ).setVisible(true);
+        });
+
+        buttonPanel.add(btnAlert); // 패널에 버튼 장착
 
         panel.add(buttonPanel, BorderLayout.EAST);
         return panel;
@@ -351,6 +384,10 @@ public class MainFrame extends JFrame {
             }
             
             UpbitWebSocketDao.getInstance().start();
+            
+            if (alertService != null) {
+                DAO.UpbitWebSocketDao.getInstance().addListener(alertService);
+            }
         });
     }
 
@@ -399,6 +436,10 @@ public class MainFrame extends JFrame {
 
         if (orderPanel != null) {
             orderPanel.setSelectedCoin(coinSymbol);
+        }
+        //알림 엔진 다시 연결
+        if (alertService != null) {
+            DAO.UpbitWebSocketDao.getInstance().addListener(alertService);
         }
     }
 
