@@ -286,6 +286,13 @@ public class MainFrame extends JFrame {
 
         chartPanel = new CandleChartPanel("BTC 차트");
         chartPanel.setPreferredSize(new Dimension(0, 500));
+        
+        
+        chartPanel.setUserIdAndListener(currentUserId, () -> {
+            if (historyPanel != null) {
+                historyPanel.loadWatchlist(); // 좌측 탭 즉시 갱신
+            }
+        });
 
         orderBookPanel = new OrderBookPanel("BTC");
         orderBookPanel.setPreferredSize(new Dimension(0, 350));

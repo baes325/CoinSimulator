@@ -33,4 +33,46 @@ public class WatchListDAO {
         }
         return list;
     }
+    
+    
+    public boolean isWatchlist(String userId, String market) {
+        String sql = "SELECT 1 FROM watchlists WHERE user_id = ? AND market = ?";
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, userId);
+            pstmt.setString(2, market);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                return rs.next();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    // 관심 코인 추가
+    public void addWatchlist(String userId, String market) {
+        String sql = "INSERT INTO watchlists (user_id, market) VALUES (?, ?)";
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, userId);
+            pstmt.setString(2, market);
+            pstmt.executeUpdate();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    // 관심 코인 삭제
+    public void removeWatchlist(String userId, String market) {
+        String sql = "DELETE FROM watchlists WHERE user_id = ? AND market = ?";
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, userId);
+            pstmt.setString(2, market);
+            pstmt.executeUpdate();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
 }

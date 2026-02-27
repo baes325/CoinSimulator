@@ -265,4 +265,67 @@ public class BacktestSessionDAO {
         }
         return null;
     }
+    
+    // ──────────────────────────────────────────────
+    //  세션 삭제 (DB 스키마 맞춤형)
+    // ──────────────────────────────────────────────
+    public boolean deleteSession(long sessionId) {
+        Connection conn = null;
+        try {
+            conn = DBConnection.getConnection();
+            conn.setAutoCommit(false); // 트랜잭션 시작
+
+            // 1. 해당 세션의 orders에 연결된 executions(체결 내역) 먼저 삭제
+            String deleteExecutionsSql = 
+                "DELETE e FROM executions e " +
+                "INNER JOIN orders o ON e.order_id = o.order_id " +
+                "WHERE o.session_id = ?";
+            try (PreparedStatement ps = conn.prepareStatement(deleteExecutionsSql)) {
+                ps.setLong(1, sessionId);
+                ps.executeUpdate();
+            }
+
+            // 2. orders(주문 내역) 삭제
+            String deleteOrdersSql = "DELETE FROM orders WHERE session_id = ?";
+            try (PreparedStatement ps = conn.prepareStatement(deleteOrdersSql)) {
+                ps.setLong(1, sessionId);
+                ps.executeUpdate();
+            }
+
+            // 3. assets(자산 내역) 삭제 
+            // (DB에 ON DELETE CASCADE가 있지만 명시적 삭제로 안정성 확보)
+            String deleteAssetsSql = "DELETE FROM assets WHERE session_id = ?";
+            try (PreparedStatement ps = conn.prepareStatement(deleteAssetsSql)) {
+                ps.setLong(1, sessionId);
+                ps.executeUpdate();
+            }
+
+            // 4. 최종적으로 simulation_sessions(세션 본체) 삭제
+            String deleteSessionSql = "DELETE FROM simulation_sessions WHERE session_id = ?";
+            try (PreparedStatement ps = conn.prepareStatement(deleteSessionSql)) {
+                ps.setLong(1, sessionId);
+                ps.executeUpdate();
+            }
+
+            conn.commit(); // 모든 삭제가 성공하면 DB 반영
+            return true;
+
+        } catch (SQLException e) {
+            e.printStackTrace();
+            if (conn != null) {
+                try { conn.rollback(); } catch (SQLException ex) { ex.printStackTrace(); }
+            }
+            return false;
+        } finally {
+            if (conn != null) {
+                try { 
+                    conn.setAutoCommit(true);
+                    conn.close(); 
+                } catch (SQLException e) { e.printStackTrace(); }
+            }
+        }
+    }
+    
+    
+    
 }

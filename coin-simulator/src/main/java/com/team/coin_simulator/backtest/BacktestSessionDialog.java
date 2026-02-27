@@ -96,10 +96,9 @@ public class BacktestSessionDialog extends JDialog {
         refreshTable();
     }
 
+ // ════════════════════════════════════════════════
+    //  탭 1 : 기존 세션 목록 (수정됨)
     // ════════════════════════════════════════════════
-    //  탭 1 : 기존 세션 목록
-    // ════════════════════════════════════════════════
-
     private JPanel buildExistingTab() {
         JPanel panel = new JPanel(new BorderLayout(0, 8));
         panel.setBorder(new EmptyBorder(10, 10, 10, 10));
@@ -115,7 +114,6 @@ public class BacktestSessionDialog extends JDialog {
         sessionTable.setFont(new Font("맑은 고딕", Font.PLAIN, 13));
         sessionTable.getTableHeader().setFont(new Font("맑은 고딕", Font.BOLD, 13));
 
-        // 더블클릭 → 즉시 입장
         sessionTable.addMouseListener(new MouseAdapter() {
             @Override public void mouseClicked(MouseEvent e) {
                 if (e.getClickCount() == 2) onEnterClicked();
@@ -125,10 +123,25 @@ public class BacktestSessionDialog extends JDialog {
         JScrollPane scroll = new JScrollPane(sessionTable);
         panel.add(scroll, BorderLayout.CENTER);
 
+        // --- 하단 안내문 및 삭제 버튼 묶음 패널 추가 ---
+        JPanel bottomContainer = new JPanel(new BorderLayout());
+        bottomContainer.setBackground(Color.WHITE);
+        
         JLabel hint = new JLabel("세션을 선택한 뒤 [입장] 버튼을 누르거나 더블클릭하세요.");
         hint.setForeground(Color.GRAY);
         hint.setFont(new Font("맑은 고딕", Font.PLAIN, 11));
-        panel.add(hint, BorderLayout.SOUTH);
+        
+        JButton btnDelete = new JButton("선택 삭제");
+        btnDelete.setFont(new Font("맑은 고딕", Font.BOLD, 12));
+        btnDelete.setBackground(new Color(231, 76, 60)); // 빨간색 강조
+        btnDelete.setForeground(Color.WHITE);
+        btnDelete.setFocusPainted(false);
+        btnDelete.addActionListener(e -> onDeleteClicked());
+
+        bottomContainer.add(hint, BorderLayout.WEST);
+        bottomContainer.add(btnDelete, BorderLayout.EAST);
+        
+        panel.add(bottomContainer, BorderLayout.SOUTH);
 
         return panel;
     }
@@ -397,6 +410,42 @@ LocalDateTime earliest = dao.getEarliestCandleTime();
         }
     }
 
+    /** [선택 삭제] 버튼 이벤트 */
+    private void onDeleteClicked() {
+        int viewRow = sessionTable.getSelectedRow();
+        if (viewRow < 0) {
+            JOptionPane.showMessageDialog(this, "삭제할 세션을 먼저 선택해주세요.", "알림", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        int modelRow = sessionTable.convertRowIndexToModel(viewRow);
+        SessionDTO targetSession = currentSessionList.get(modelRow);
+
+        // 1. 현재 실행 중인 세션인지 검증
+        long activeSessionId = SessionManager.getInstance().getCurrentSessionId();
+        if (targetSession.getSessionId() == activeSessionId) {
+            JOptionPane.showMessageDialog(this, "현재 실행 중인 세션은 삭제할 수 없습니다.", "오류", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        // 2. 삭제 확인 알림
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "[" + targetSession.getSessionName() + "] 세션을 정말 삭제하시겠습니까?\n이 작업은 되돌릴 수 없으며, 모든 거래 내역이 함께 삭제됩니다.",
+                "세션 삭제",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            boolean isDeleted = dao.deleteSession(targetSession.getSessionId());
+            if (isDeleted) {
+                JOptionPane.showMessageDialog(this, "세션이 성공적으로 삭제되었습니다.", "완료", JOptionPane.INFORMATION_MESSAGE);
+                refreshTable(); // 테이블 데이터 리로드
+            } else {
+                JOptionPane.showMessageDialog(this, "세션 삭제 중 오류가 발생했습니다.", "오류", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+    
     private void updateEndDateLabel() {
         try {
             LocalDateTime start = LocalDateTime.parse(tfStartDate.getText().trim(), FMT);

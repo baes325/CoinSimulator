@@ -81,6 +81,12 @@ public class CandleChartPanel extends JPanel {
      */
     private static final int MAX_VISIBLE_CANDLES = 200;
 
+    // 관심 코인 관련 필드
+    private String currentUserId;
+    private Runnable watchlistListener;
+    private JButton btnWatchlist;
+    private DAO.WatchListDAO watchListDAO = new DAO.WatchListDAO();
+    
     // ── 타임프레임별 페이지 캐시 ─────────────────────────
     /**
      * 타임프레임 하나의 캐시 상태를 담는 내부 클래스.
@@ -175,6 +181,12 @@ public class CandleChartPanel extends JPanel {
         for (int tf : new int[]{TF_1M, TF_30M, TF_1H, TF_1D, TF_1MON}) {
             cacheMap.put(tf, new PageCache());
         }
+    }
+    
+    public void setUserIdAndListener(String userId, Runnable listener) {
+        this.currentUserId = userId;
+        this.watchlistListener = listener;
+        updateWatchlistButtonState(); // 초기 렌더링 시 별 상태 동기화
     }
 
 
@@ -282,7 +294,24 @@ public class CandleChartPanel extends JPanel {
 
             buttonPanel.add(button);
         }
-        add(buttonPanel, BorderLayout.NORTH);
+        
+     // 분봉 버튼들과 약간의 간격 띄우기
+        buttonPanel.add(Box.createHorizontalStrut(20));
+
+        // 관심 코인 버튼(별) 추가
+        btnWatchlist = new JButton("☆");
+        btnWatchlist.setFont(new Font("맑은 고딕", Font.BOLD, 20));
+        btnWatchlist.setForeground(new Color(241, 196, 15)); // 노란색
+        btnWatchlist.setBackground(Color.WHITE);
+        btnWatchlist.setFocusPainted(false);
+        btnWatchlist.setBorderPainted(false);
+        btnWatchlist.setContentAreaFilled(false);
+        btnWatchlist.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        
+        btnWatchlist.addActionListener(e -> toggleWatchlist());
+        buttonPanel.add(btnWatchlist);
+
+        add(buttonPanel, BorderLayout.NORTH); // 기존 코드
     }
 
 
@@ -314,6 +343,31 @@ public class CandleChartPanel extends JPanel {
     /** 전체 캐시 초기화 (종목/모드 변경 시) */
     private void resetAllCaches() {
         for (PageCache c : cacheMap.values()) c.reset();
+    }
+    
+    
+    private void updateWatchlistButtonState() {
+        if (currentUserId == null || btnWatchlist == null) return;
+        boolean isWatching = watchListDAO.isWatchlist(currentUserId, currentMarket);
+        btnWatchlist.setText(isWatching ? "★" : "☆");
+    }
+
+    private void toggleWatchlist() {
+        if (currentUserId == null) return;
+        boolean isWatching = watchListDAO.isWatchlist(currentUserId, currentMarket);
+        
+        if (isWatching) {
+            watchListDAO.removeWatchlist(currentUserId, currentMarket);
+            btnWatchlist.setText("☆");
+        } else {
+            watchListDAO.addWatchlist(currentUserId, currentMarket);
+            btnWatchlist.setText("★");
+        }
+
+        // MainFrame의 HistoryPanel 새로고침 트리거
+        if (watchlistListener != null) {
+            watchlistListener.run();
+        }
     }
 
     /** 특정 DB unit 캐시만 초기화 */
@@ -1061,6 +1115,7 @@ public class CandleChartPanel extends JPanel {
         liveCandleMinuteStart = null;
         resetAllCaches(); // 종목 바뀌면 모든 캐시 초기화
         refreshChart();
+        updateWatchlistButtonState(); 
         if (backtestTargetTime == null) connectWebSocket();
     }
 

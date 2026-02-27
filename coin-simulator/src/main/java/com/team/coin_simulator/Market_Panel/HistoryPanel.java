@@ -184,7 +184,7 @@ public class HistoryPanel extends JPanel implements UpbitWebSocketDao.TickerList
         
         //코인 데이터 추가
         initDataAndWebSocket();
-        watchList();
+        loadWatchlist();
     }
     
     @Override
@@ -366,20 +366,46 @@ public class HistoryPanel extends JPanel implements UpbitWebSocketDao.TickerList
         for (String code : CoinConfig.getCodes()) {
             addNewCoin(0, code, "Loading...", "0.00", "0");
         }
-        //    싱글톤 DAO에 '나에게도 시세 데이터 줘(addListener)'라고 등록만 합니다.
+        // 싱글톤 DAO에 리스너 등록
         UpbitWebSocketDao.getInstance().addListener(this);
-        // 3. 보유 자산 로드 (기존 유지)
+        // 보유 자산 로드
         loadOwnedAssets();
+        
+        // --- 변경된 부분 ---
+        loadWatchlist(); // 기존 watchList() 대신 호출
     }
     
     
-    private void watchList() {
+ // 기존 watchList() 대신 아래 메서드 사용
+    public void loadWatchlist() {
+        // 1. 기존 관심 코인 패널에 있던 컴포넌트들을 coinMap에서 안전하게 제거 (메모리 누수 방지)
+        for (java.awt.Component comp : interestCoinPanel.getComponents()) {
+            if (comp instanceof CoinRowPanel) {
+                for (List<CoinRowPanel> panelList : coinMap.values()) {
+                    panelList.remove(comp);
+                }
+            }
+        }
+        
+        // 2. 패널 비우기
+        interestCoinPanel.removeAll();
+        
+        // 3. DB에서 관심 코인 목록 불러오기
         WatchListDAO dao = new WatchListDAO();
         List<WatchlistDTO> dbWatchlist = dao.getWatchlistByUser(loginUser);
 
         for (WatchlistDTO dto : dbWatchlist) {
-            addNewCoin(1, dto.getMarket(), "Loading...", "0.00", "0");
+            // "KRW-BTC" 에서 "BTC"만 추출하여 차트 및 웹소켓과 심볼 동기화
+            String market = dto.getMarket();
+            String symbol = market.startsWith("KRW-") ? market.substring(4) : market;
+            
+            // 관심 코인 탭(type: 1)에 추가
+            addNewCoin(1, symbol, "Loading...", "0.00", "0");
         }
+        
+        // 4. UI 새로고침
+        interestCoinPanel.revalidate();
+        interestCoinPanel.repaint();
     }
     
    
