@@ -304,6 +304,11 @@ public class HistoryPanel extends JPanel implements UpbitWebSocketDao.TickerList
     
     
     public void loadOwnedAssets() {
+        // [수정 핵심] 1. 기존 coinMap에서 AssetRowPanel 인스턴스만 찾아서 제거 (메모리 누수 및 좀비 업데이트 방지)
+        for (List<CoinRowPanel> panelList : coinMap.values()) {
+            panelList.removeIf(panel -> panel instanceof AssetRowPanel);
+        }
+        
         ownedCoinPanel.removeAll();
         
         List<AssetDTO> assets = assetDAO.getUserAssets(loginUser, sessionId);
@@ -318,9 +323,9 @@ public class HistoryPanel extends JPanel implements UpbitWebSocketDao.TickerList
                 String displayName = "<html><center>" + krName + "<br><font size='3' color='gray'>" + symbol + "</font></center></html>";
 
                 AssetRowPanel row = new AssetRowPanel(displayName, asset);
-                
                 ownedCoinPanel.add(row);
                 
+                // coinMap에 새로 추가
                 coinMap.computeIfAbsent(symbol, k -> new ArrayList<>()).add(row);
             }
         }

@@ -269,6 +269,7 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
                             javax.swing.JFrame parentFrame = (javax.swing.JFrame) javax.swing.SwingUtilities.getWindowAncestor(OrderPanel.this);
                             if(parentFrame != null) com.team.coin_simulator.Alerts.NotificationUtil.showToast(parentFrame, msg);
                             refreshDBData(); 
+                            triggerMainFrameRefresh();
                         });
                     }
                 }
@@ -386,6 +387,7 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
             if (orderDAO.insertOrder(order)) {
                 JOptionPane.showMessageDialog(this, "지정가 주문 접수 완료");
                 refreshDBData(); // 주문 접수 후 DB 새로고침
+                triggerMainFrameRefresh();
             } else throw new RuntimeException("데이터베이스 저장에 실패했습니다.");
         } catch (Exception e) { JOptionPane.showMessageDialog(this, "주문 오류: " + e.getMessage(), "알림", JOptionPane.ERROR_MESSAGE); }
     }
@@ -423,6 +425,7 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
                 if (orderDAO.executeMarketOrder(marketOrder, this.userId, currentSelectedPrice, buyQty, inputVal)) {
                     com.team.coin_simulator.Alerts.NotificationUtil.showToast((JFrame) SwingUtilities.getWindowAncestor(this), String.format("[체결] %s 시장가 매수 완료 (%.8f개)", selectedCoinCode, buyQty));
                     refreshDBData(); // 💡 DB 동기화
+                    triggerMainFrameRefresh();
                 } else throw new RuntimeException("DB 저장 실패");
                 
             } else { //[시장가 매도]
@@ -661,4 +664,18 @@ List<AssetDTO> assets = assetDAO.getAllAssets(this.userId, getSessionId());
     public BigDecimal getCurrentSelectedPrice() {
         return this.currentSelectedPrice;
     }
+    
+    
+    private void triggerMainFrameRefresh() {
+        SwingUtilities.invokeLater(() -> {
+            JFrame parentFrame = (JFrame) SwingUtilities.getWindowAncestor(this);
+            if (parentFrame instanceof com.team.coin_simulator.MainFrame) {
+                ((com.team.coin_simulator.MainFrame) parentFrame).refreshAllPanels();
+            }
+        });
+    }
+    
+    
+    
+    
 }
