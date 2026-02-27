@@ -66,7 +66,50 @@ public class HistoricalDataDAO {
         
         return tickers;
     }
+    /**
+     * 특정 날짜(24시간)의 모든 코인 1분봉 데이터를 가져옵니다.
+     * 반환 구조: Map<시간, Map<코인명, TickerDto>>
+     */
+    public Map<LocalDateTime, Map<String, DTO.TickerDto>> getDailyCandlesForCache(LocalDateTime startOfDay) {
+        Map<LocalDateTime, Map<String, DTO.TickerDto>> dailyData = new HashMap<>();
+        LocalDateTime endOfDay = startOfDay.plusDays(1);
 
+        String sql = "SELECT market, candle_date_time_kst, trade_price, opening_price, " +
+                     "candle_acc_trade_price, candle_acc_trade_volume " +
+                     "FROM market_candle " +
+                     "WHERE candle_date_time_kst >= ? AND candle_date_time_kst < ? AND unit = 1";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setTimestamp(1, Timestamp.valueOf(startOfDay));
+            pstmt.setTimestamp(2, Timestamp.valueOf(endOfDay));
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    LocalDateTime time = rs.getTimestamp("candle_date_time_kst").toLocalDateTime();
+                    String market = rs.getString("market").replace("KRW-", "");
+                    
+                    DTO.TickerDto ticker = new DTO.TickerDto();
+                    ticker.setCode(market);
+                    ticker.setTrade_price(rs.getDouble("trade_price"));
+                    ticker.setAcc_trade_price(rs.getDouble("candle_acc_trade_price"));
+                    
+                    double openPrice = rs.getDouble("opening_price");
+                    if (openPrice > 0) {
+                        ticker.setSigned_change_rate((ticker.getTrade_price() - openPrice) / openPrice);
+                    }
+
+                    dailyData.computeIfAbsent(time, k -> new HashMap<>()).put(market, ticker);
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return dailyData;
+    }
+    
+    
     /**
      * [신규 추가] 백테스트 시작 시점 또는 날짜 변경 시 누적 거래대금 초기화용
      * 당일 오전 9시(KST)부터 targetTime까지의 합계를 조회합니다.
