@@ -46,38 +46,31 @@ public class CandleChartBacktestAdapter implements BacktestTimeController.Backte
     @Override
     public void onTick(LocalDateTime currentSimTime, BacktestSpeed speed) {
         
-        // ── 0. 날짜 변경(오전 9시) 시 캐시 교체 및 프리페칭 수행 ──
+    	// ── 0. 날짜 변경(오전 9시) 시 캐시 교체 및 프리페칭 수행 ──
         LocalDateTime startOfDay = getStartOfDay(currentSimTime);
         if (currentAccDay == null || !currentAccDay.equals(startOfDay)) {
             currentAccDay = startOfDay;
             
-            // 1. 캐시 교체 로직: 미리 로드된 내일 데이터가 있으면 즉시 교체
+            // 1. 캐시 교체 로직
             if (!nextDayCache.isEmpty()) {
                 currentDayCache = nextDayCache;
                 nextDayCache = new ConcurrentHashMap<>(); 
                 System.out.println("[Cache] 내일 데이터를 현재 캐시로 전환 완료: " + currentAccDay);
             } else {
-                // 초기 실행 시 또는 캐시가 비었을 때만 동기 로드 (최소한의 대기)
+                // DB 조회는 하루치 캔들 캐싱 딱 1번만 실행
                 currentDayCache = historicalDataDAO.getDailyCandlesForCache(startOfDay);
             }
 
-            // 2. 비동기로 다음 날짜 데이터 미리 가져오기 (Prefetch)
+            // 2. 무거운 DB 쿼리(시가, 거래대금) 대신 자바 메모리에서 0.01초 만에 직접 계산
+            extractInitDataFromCache(currentSimTime);
+
+            // 3. 비동기로 다음 날짜 데이터 미리 가져오기 (Prefetch)
             CompletableFuture.runAsync(() -> {
                 LocalDateTime nextDay = startOfDay.plusDays(1);
                 nextDayCache = historicalDataDAO.getDailyCandlesForCache(nextDay);
                 System.out.println("[Cache] 다음 날짜(" + nextDay + ") 데이터 백그라운드 로드 완료");
             });
-            
-            // 3. 거래대금 및 시가 초기화 동기화 (기존 로직 유지)
-            Map<String, Double> initData = historicalDataDAO.getInitDailyAccTradePrice(currentSimTime);
-            dailyAccVolume.clear();
-            dailyAccVolume.putAll(initData);
-            
-            Map<String, Double> openData = historicalDataDAO.getDailyOpenPrices(currentSimTime);
-            dailyOpenPrice.clear();
-            dailyOpenPrice.putAll(openData);
         }
-
         // ── 1. 차트 갱신 ─────────────────────────────
         int chartIntervalMinutes = calcChartInterval(speed);
         boolean shouldUpdateChart = (lastChartUpdateTime == null)
@@ -88,8 +81,7 @@ public class CandleChartBacktestAdapter implements BacktestTimeController.Backte
             final LocalDateTime snapTime = currentSimTime;
             SwingUtilities.invokeLater(() -> chartPanel.loadHistoricalData(snapTime));
         }
-
-        // ── 2. 마켓 패널 갱신 (캐시 참조 방식으로 변경) ────────────────
+        
      // ── 2. 마켓 패널 갱신 ─────────────────────────
         int marketInterval = Math.max(1, speed.getMinutesPerTick());
         boolean shouldUpdateMarket = (lastMarketUpdateTime == null)
@@ -104,6 +96,52 @@ public class CandleChartBacktestAdapter implements BacktestTimeController.Backte
         }
     }
     
+    
+    /**
+     * DB 조회 없이 캐시된 하루치 1분봉 데이터를 순회하며 
+     * 시뮬레이션 현재 시간까지의 '누적 거래대금'과 당일 '시가'를 직접 계산합니다.
+     */
+    private void extractInitDataFromCache(LocalDateTime targetTime) {
+        dailyAccVolume.clear();
+        dailyOpenPrice.clear();
+        
+        // 코인별로 가장 첫 번째 캔들의 시간을 기록하여 시가를 찾기 위한 맵
+        Map<String, LocalDateTime> firstCandleTimeMap = new ConcurrentHashMap<>();
+
+        for (Map.Entry<LocalDateTime, Map<String, DTO.TickerDto>> entry : currentDayCache.entrySet()) {
+            LocalDateTime candleTime = entry.getKey();
+            
+            // 핵심 1: 현재 시뮬레이션 시간(targetTime)을 초과하는 미래 데이터는 절대 누적하지 않음
+            if (candleTime.isAfter(targetTime)) {
+                continue;
+            }
+
+            for (Map.Entry<String, DTO.TickerDto> coinEntry : entry.getValue().entrySet()) {
+                String symbol = coinEntry.getKey();
+                DTO.TickerDto ticker = coinEntry.getValue();
+
+                // 1. 누적 거래대금 합산
+                double currentAcc = dailyAccVolume.getOrDefault(symbol, 0.0);
+                dailyAccVolume.put(symbol, currentAcc + ticker.getAcc_trade_price());
+
+                // 2. 당일 시가(Open Price) 찾기 및 복원
+                if (!firstCandleTimeMap.containsKey(symbol) || candleTime.isBefore(firstCandleTimeMap.get(symbol))) {
+                    firstCandleTimeMap.put(symbol, candleTime);
+                    
+                    // 핵심 2: TickerDto에 없는 시가를 '현재가'와 '등락률'을 이용해 수학적으로 역산
+                    double tradePrice = ticker.getTrade_price();
+                    double changeRate = ticker.getSigned_change_rate(); // ex) 0.05 (5%)
+                    
+                    double openPrice = tradePrice;
+                    if (changeRate != 0.0 && changeRate != -1.0) {
+                        openPrice = tradePrice / (1.0 + changeRate);
+                    }
+                    
+                    dailyOpenPrice.put(symbol, openPrice);
+                }
+            }
+        }
+    }
     
     
     
