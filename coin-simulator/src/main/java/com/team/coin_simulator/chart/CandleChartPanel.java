@@ -120,6 +120,7 @@ public class CandleChartPanel extends JPanel {
     private OverlayChartPanel chartPanel;
     private CandleDAO candleDAO = new CandleDAO();
     private JButton selectedButton;
+    private JLabel lblChartTitle;
 
     // ── 초기 상태 ────────────────────────────────────────
     private String currentMarket = "KRW-BTC";
@@ -159,12 +160,12 @@ public class CandleChartPanel extends JPanel {
         // plot이 null인 상태에서 createDataset 호출 — fetchPagedCandles 내부에서 처리
         OHLCDataset dataset = createDataset(currentMarket, currentTimeframe, null);
         chart = ChartFactory.createCandlestickChart(null, "", "", dataset, false);
-        chart.setTitle(getCurrentMarketSymbol());
+        chart.setTitle(""); 
         plot = (XYPlot) chart.getPlot(); // ← 여기서 plot 초기화
 
         configureChartUI();
         setupChartPanel();
-        createButtonPanel();
+        createTopArea();
 
         add(chartPanel, BorderLayout.CENTER);
 
@@ -262,7 +263,12 @@ public class CandleChartPanel extends JPanel {
         });
     }
 
-    private void createButtonPanel() {
+    private void createTopArea() {
+        JPanel topContainer = new JPanel();
+        topContainer.setLayout(new BoxLayout(topContainer, BoxLayout.Y_AXIS));
+        topContainer.setBackground(Color.WHITE);
+
+        // 타임프레임(분봉) 버튼
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         buttonPanel.setBackground(Color.WHITE);
 
@@ -287,7 +293,6 @@ public class CandleChartPanel extends JPanel {
                 selectedButton = button;
                 currentTimeframe = timeframe;
 
-                // 타임프레임 전환 시 해당 캐시만 초기화 (다른 TF 캐시는 유지)
                 resetCache(dbUnitOf(timeframe));
                 refreshChart();
             });
@@ -295,23 +300,32 @@ public class CandleChartPanel extends JPanel {
             buttonPanel.add(button);
         }
         
-     // 분봉 버튼들과 약간의 간격 띄우기
-        buttonPanel.add(Box.createHorizontalStrut(20));
+     // 코인 이름 + 관심코인(★)
+        JPanel titlePanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
+        titlePanel.setBackground(Color.WHITE);
 
-        // 관심 코인 버튼(별) 추가
+        lblChartTitle = new JLabel(getCurrentMarketSymbol());
+        lblChartTitle.setFont(new Font("맑은 고딕", Font.BOLD, 20)); // 글씨 크기 큼직하게!
+
         btnWatchlist = new JButton("☆");
-        btnWatchlist.setFont(new Font("맑은 고딕", Font.BOLD, 20));
-        btnWatchlist.setForeground(new Color(241, 196, 15)); // 노란색
+        btnWatchlist.setFont(new Font("맑은 고딕", Font.BOLD, 22));
+        btnWatchlist.setForeground(new Color(241, 196, 15)); // 예쁜 노란색
         btnWatchlist.setBackground(Color.WHITE);
         btnWatchlist.setFocusPainted(false);
         btnWatchlist.setBorderPainted(false);
         btnWatchlist.setContentAreaFilled(false);
         btnWatchlist.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        
-        btnWatchlist.addActionListener(e -> toggleWatchlist());
-        buttonPanel.add(btnWatchlist);
+        btnWatchlist.setMargin(new Insets(0, 0, 0, 0)); // 여백을 없애서 글씨 옆에 착 붙게
 
-        add(buttonPanel, BorderLayout.NORTH); // 기존 코드
+        btnWatchlist.addActionListener(e -> toggleWatchlist());
+
+        titlePanel.add(lblChartTitle);
+        titlePanel.add(btnWatchlist);
+
+        // 1층과 2층을 합쳐서 북쪽에 부착!
+        topContainer.add(buttonPanel);
+        topContainer.add(titlePanel);
+        add(topContainer, BorderLayout.NORTH);
     }
 
 
@@ -822,9 +836,10 @@ public class CandleChartPanel extends JPanel {
         OHLCDataset dataset = createDataset(currentMarket, currentTimeframe, backtestTargetTime);
         plot.setDataset(dataset);
 
-        chart.setTitle(backtestTargetTime != null
-                ? getCurrentMarketSymbol() + " (Backtesting)"
-                : getCurrentMarketSymbol());
+        String title = backtestTargetTime != null 
+                ? getCurrentMarketSymbol() + " (Backtesting)" 
+                : getCurrentMarketSymbol();
+        if (lblChartTitle != null) lblChartTitle.setText(title);
 
         updateXAxisRange(dataset);
         updateYAxisRange(dataset);
@@ -1117,6 +1132,8 @@ public class CandleChartPanel extends JPanel {
         // [해결 코드] 이전 코인의 실시간 가격 및 시간 데이터 초기화
         this.latestLivePrice = -1;
         this.latestLiveTimestamp = -1;
+        //코인 바꿀 때 타이틀 즉시 변경
+        if (lblChartTitle != null) lblChartTitle.setText(coinSymbol);
 
         resetAllCaches(); 
         refreshChart();
@@ -1140,7 +1157,7 @@ public class CandleChartPanel extends JPanel {
             updateYAxisRange(dataset);
             drawCurrentPriceDashLine(dataset);
             applyDateAxisFormat();
-            chart.setTitle(getCurrentMarketSymbol() + " (Backtesting)");
+            if (lblChartTitle != null) lblChartTitle.setText(getCurrentMarketSymbol() + " (Backtesting)");
         });
     }
 
