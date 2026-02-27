@@ -1113,7 +1113,12 @@ public class CandleChartPanel extends JPanel {
         this.currentMarket = "KRW-" + coinSymbol;
         liveCandle = null;
         liveCandleMinuteStart = null;
-        resetAllCaches(); // 종목 바뀌면 모든 캐시 초기화
+        
+        // [해결 코드] 이전 코인의 실시간 가격 및 시간 데이터 초기화
+        this.latestLivePrice = -1;
+        this.latestLiveTimestamp = -1;
+
+        resetAllCaches(); 
         refreshChart();
         updateWatchlistButtonState(); 
         if (backtestTargetTime == null) connectWebSocket();
