@@ -90,14 +90,90 @@ public class CandleChartBacktestAdapter implements BacktestTimeController.Backte
         }
 
         // ── 2. 마켓 패널 갱신 (캐시 참조 방식으로 변경) ────────────────
+     // ── 2. 마켓 패널 갱신 ─────────────────────────
         int marketInterval = Math.max(1, speed.getMinutesPerTick());
         boolean shouldUpdateMarket = (lastMarketUpdateTime == null)
             || java.time.temporal.ChronoUnit.MINUTES.between(lastMarketUpdateTime, currentSimTime) >= marketInterval;
 
         if (shouldUpdateMarket) {
+            LocalDateTime startTarget = (lastMarketUpdateTime != null) ? lastMarketUpdateTime : currentSimTime.minusMinutes(1);
             lastMarketUpdateTime = currentSimTime;
-            updateMarketPanelFromCache(currentSimTime);
+            
+            // 구간(이전 갱신시간 ~ 현재 시뮬레이션 시간)을 넘겨 스레드 내부에서 순차 처리하게 함
+            updateMarketPanel(startTarget, currentSimTime);
         }
+    }
+    
+    
+    
+    
+    private void updateMarketPanel(LocalDateTime startTime, LocalDateTime endTime) {
+        Thread.ofVirtual().start(() -> {
+            try {
+                LocalDateTime cursor = startTime.plusMinutes(1);
+                Map<String, DTO.TickerDto> lastTickers = null;
+
+                // 1. 단일 비동기 스레드 내에서 건너뛴 시간만큼 순차적으로 DB 조회 및 누적 (스레드 충돌 방지)
+                while (!cursor.isAfter(endTime)) {
+                    Map<String, DTO.TickerDto> tickers = historicalDataDAO.getTickersAtTime(cursor);
+                    if (!tickers.isEmpty()) {
+                        lastTickers = tickers;
+                        for (Map.Entry<String, DTO.TickerDto> entry : tickers.entrySet()) {
+                            String symbol = entry.getKey().replace("KRW-", "");
+                            double minuteVolume = entry.getValue().getAcc_trade_price();
+                            
+                            // 맵 데이터 누적
+                            double accumulated = dailyAccVolume.getOrDefault(symbol, 0.0) + minuteVolume;
+                            dailyAccVolume.put(symbol, accumulated);
+                        }
+                    }
+                    cursor = cursor.plusMinutes(1);
+                }
+
+                // 2. 누적 완료 후 마지막 데이터가 없다면 UI 업데이트 생략
+                if (lastTickers == null) return;
+                
+                final Map<String, DTO.TickerDto> finalTickers = lastTickers;
+
+                // 3. UI 갱신은 점프한 시간의 "최종 상태" 기준으로 1회만 실행 (UI 렉 방지)
+                SwingUtilities.invokeLater(() -> {
+                    for (Map.Entry<String, DTO.TickerDto> entry : finalTickers.entrySet()) {
+                        String symbol = entry.getKey().replace("KRW-", "");
+                        DTO.TickerDto ticker = entry.getValue();
+
+                        double price = ticker.getTrade_price();
+                        double openPrice = dailyOpenPrice.getOrDefault(symbol, price);
+                        
+                        double flucRate = 0.0;
+                        if (openPrice > 0) {
+                            flucRate = ((price - openPrice) / openPrice) * 100;
+                        }
+
+                        String priceStr;
+                        if (price < 1)       priceStr = String.format("%,.5f", price);
+                        else if (price < 100) priceStr = String.format("%,.2f", price);
+                        else                  priceStr = String.format("%,.0f", price);
+
+                        String flucStr = String.format("%.2f", flucRate);
+                        
+                        double finalAccumulated = dailyAccVolume.getOrDefault(symbol, 0.0);
+                        String accPrStr;
+                        if (finalAccumulated >= 100_000_000) {
+                            accPrStr = String.format("%,.0f백만", finalAccumulated / 1_000_000);
+                        } else {
+                            accPrStr = String.format("%,.0f", finalAccumulated);
+                        }
+
+                        historyPanel.updateCoinPrice(symbol, priceStr, flucStr, accPrStr);
+                        if (orderPanel != null) {
+                            orderPanel.onTickerUpdate(symbol, priceStr, flucStr, accPrStr, "15.0");
+                        }
+                    }
+                });
+            } catch (Exception e) {
+                System.err.println("[CandleChartBacktestAdapter] 마켓 패널 업데이트 오류: " + e.getMessage());
+            }
+        });
     }
 
     /**
