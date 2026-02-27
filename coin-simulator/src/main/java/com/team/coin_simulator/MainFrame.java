@@ -70,7 +70,7 @@ public class MainFrame extends JFrame {
     private Thread marketSyncThread;
     
     // 상태 관리
-    private String currentUserId = "test_user1";
+    private String currentUserId = "test3";
     private boolean isTradingView = true;
 
     // 카드 식별자

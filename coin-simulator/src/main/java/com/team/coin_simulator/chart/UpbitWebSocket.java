@@ -59,8 +59,7 @@ public class UpbitWebSocket implements WebSocket.Listener {
         
         // 3. 차트 패널에 실시간 가격 업데이트
         if (tradePrice > 0 && chartPanel != null) {
-            // 변경: 종목 코드도 함께 전달
-            chartPanel.setLatestPriceFromWebSocket(this.market, tradePrice);
+        	chartPanel.setLatestPriceFromWebSocket(tradePrice);
         }
 
         // 다음 메시지를 계속 수신하기 위해 호출

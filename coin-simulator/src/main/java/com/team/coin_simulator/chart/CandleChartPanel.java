@@ -4,11 +4,14 @@ import java.awt.*;
 import java.awt.event.*;
 import java.awt.geom.Rectangle2D;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import javax.swing.*;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
@@ -29,13 +32,12 @@ import org.jfree.data.xy.OHLCDataset;
  *  1. 현재가 점선 + Y축 영역 위 가격 박스 표시
  *  2. 초기 로딩 시 최근 N개 캔들만 표시, 가격 범위 자동 맞춤
  *  3. 실시간 라이브 캔들 업데이트 (Swing Timer 기반)
- *     - DB에서 1분봉을 가져와 표시
- *     - 매 분 00초에 라이브 캔들을 DB 데이터로 대체하고 새 분봉 시작
  *  4. 백테스팅 모드: targetTime 기준 과거 데이터만 표시
- *     ★ 타임프레임 변경 시에도 백테스팅 시점 유지
- *  5. DB에서 타임프레임(unit)에 맞는 캔들을 직접 조회 (리샘플링 제거)
- *     - 지원 타임프레임: 1분 / 30분 / 1시간 / 4시간 / 1일 / 1달
- *     - market_candle 테이블에 unit 컬럼별로 사전 집계된 데이터 필요
+ *  5. ★ 모든 타임프레임 뷰포트 페이징
+ *     - 드래그/줌 시 화면 범위 + 버퍼(PAGE_BUFFER)만큼만 DB 조회
+ *     - 캐시 범위의 25% 이내 접근 시 백그라운드 pre-fetch
+ *     - TF_4H: TF_1H 데이터를 페이징 후 리샘플링
+ *     - TF_1MON DB 없음: TF_1D 페이징 후 월봉 리샘플링
  * ────────────────────────────────────────────────────────
  */
 public class CandleChartPanel extends JPanel {
@@ -56,9 +58,55 @@ public class CandleChartPanel extends JPanel {
     private static final int DISPLAY_1D   = 55;
     private static final int DISPLAY_1MON = 55;
 
-    
-     //각 타임프레임별로 생성할 최대 캔들 개수
-    private static final int MAX_CANDLE_COUNT = 5000;
+    // ── ★ 뷰포트 페이징 설정 ────────────────────────────
+    /**
+     * 뷰포트 양쪽으로 미리 로드할 버퍼 캔들 수.
+     * 화면에 55개가 보이면 실제 캐시는 최대 55 + PAGE_BUFFER*2 개.
+     */
+    private static final int PAGE_BUFFER = 300;
+
+    /**
+     * 캐시의 몇 % 이내로 뷰포트가 접근하면 pre-fetch 시작.
+     * 0.25 = 앞/뒤 25% 이내 진입 시.
+     */
+    private static final double PREFETCH_THRESHOLD = 0.25;
+
+    // ── ★ 줌 한도 설정 ──────────────────────────────────
+    /** 줌 인 최소 캔들 수 — 이보다 더 확대 불가 */
+    private static final int MIN_VISIBLE_CANDLES = 5;
+
+    /**
+     * 줌 아웃 최대 캔들 수 — 이보다 더 축소 불가.
+     * 1분봉 200개 = 약 3.3시간, 1일봉 200개 = 약 200일.
+     */
+    private static final int MAX_VISIBLE_CANDLES = 200;
+
+    // ── 타임프레임별 페이지 캐시 ─────────────────────────
+    /**
+     * 타임프레임 하나의 캐시 상태를 담는 내부 클래스.
+     * TF_4H는 TF_1H 데이터를 캐시하므로 cacheMap 키는 TF_1H로 저장.
+     */
+    private static class PageCache {
+        List<CandleDTO> candles = new ArrayList<>(); // ASC 정렬
+        long fromMs = -1;
+        long toMs   = -1;
+        volatile boolean prefetchInProgress = false;
+
+        void reset() {
+            candles = new ArrayList<>();
+            fromMs = -1;
+            toMs   = -1;
+            prefetchInProgress = false;
+        }
+
+        boolean isInitialized() { return fromMs >= 0 && toMs >= 0; }
+    }
+
+    /**
+     * DB 조회 unit → PageCache 맵.
+     * TF_4H 버튼은 TF_1H 캐시를 공유합니다.
+     */
+    private final Map<Integer, PageCache> cacheMap = new HashMap<>();
 
     // ── 차트 컴포넌트 ────────────────────────────────────
     private JFreeChart chart;
@@ -68,32 +116,22 @@ public class CandleChartPanel extends JPanel {
     private JButton selectedButton;
 
     // ── 초기 상태 ────────────────────────────────────────
-    private String currentMarket = "KRW-BTC"; //기본 비트코인
-    private int currentTimeframe = TF_1M; // 기본 1분봉
+    private String currentMarket = "KRW-BTC";
+    private int currentTimeframe = TF_1M;
     private Point lastMousePoint;
 
-    // ── 초기 백테스팅 상태 ─────────────────────────────────────
+    // ── 백테스팅 상태 ─────────────────────────────────────
     private LocalDateTime backtestTargetTime = null;
 
     // ── 실시간 라이브 캔들 ────────────────────────────────
-    /**
-     * 현재 진행 중인 라이브(미확정) 캔들.
-     * 매 분 00초가 되면 DB에서 확정된 1분봉으로 교체되고,
-     * liveCandle은 새로운 분봉 데이터로 초기화됩니다.
-     */
     private CandleDTO liveCandle = null;
-
-    /**
-     * liveCandle이 속하는 분봉 구간의 시작 시각 (초·나노초 = 0).
-     * ex) 14:23:37 → 14:23:00
-     */
     private LocalDateTime liveCandleMinuteStart = null;
 
     // ── 실시간 타이머 ────────────────────────────────────
     private Timer liveTimer;
-    private static final int LIVE_RENDER_MS = 500; // 500ms마다 화면 갱신
+    private static final int LIVE_RENDER_MS = 500;
     private volatile double latestLivePrice = -1;
-    private volatile long latestLiveTimestamp = -1; //거래소 서버의 타임스탬프 저장용
+    private volatile long latestLiveTimestamp = -1;
 
     // ── 웹소켓 ───────────────────────────────────────────
     private UpbitWebSocket webSocketClient;
@@ -110,10 +148,13 @@ public class CandleChartPanel extends JPanel {
         setLayout(new BorderLayout());
         setBackground(Color.WHITE);
 
+        initCacheMap();
+
+        // plot이 null인 상태에서 createDataset 호출 — fetchPagedCandles 내부에서 처리
         OHLCDataset dataset = createDataset(currentMarket, currentTimeframe, null);
         chart = ChartFactory.createCandlestickChart(null, "", "", dataset, false);
         chart.setTitle(getCurrentMarketSymbol());
-        plot = (XYPlot) chart.getPlot();
+        plot = (XYPlot) chart.getPlot(); // ← 여기서 plot 초기화
 
         configureChartUI();
         setupChartPanel();
@@ -129,6 +170,13 @@ public class CandleChartPanel extends JPanel {
         connectWebSocket();
     }
 
+    private void initCacheMap() {
+        // TF_4H는 TF_1H를 공유하므로 별도 엔트리 불필요
+        for (int tf : new int[]{TF_1M, TF_30M, TF_1H, TF_1D, TF_1MON}) {
+            cacheMap.put(tf, new PageCache());
+        }
+    }
+
 
     // ════════════════════════════════════════════════════
     //  차트 UI 설정
@@ -138,8 +186,6 @@ public class CandleChartPanel extends JPanel {
         plot.setRangeAxisLocation(AxisLocation.TOP_OR_RIGHT);
         NumberAxis yAxis = (NumberAxis) plot.getRangeAxis();
         yAxis.setAutoRangeIncludesZero(false);
-
-        //과학적 표기법(9.15E-3) 대신 일반 소수점(0.00915)
         yAxis.setNumberFormatOverride(buildPriceFormat());
 
         DateAxis domainAxis = (DateAxis) plot.getDomainAxis();
@@ -149,7 +195,7 @@ public class CandleChartPanel extends JPanel {
 
         CandlestickRenderer renderer = new CandlestickRenderer();
         renderer.setAutoWidthMethod(CandlestickRenderer.WIDTHMETHOD_SMALLEST);
-        renderer.setAutoWidthGap(0.0);   // 간격 없음 — zoom 시 벌어지는 현상 제거
+        renderer.setAutoWidthGap(0.0);
         renderer.setDrawVolume(false);
         renderer.setUpPaint(Color.RED);
         renderer.setDownPaint(Color.BLUE);
@@ -195,6 +241,10 @@ public class CandleChartPanel extends JPanel {
                 );
 
                 updateYAxisRange((OHLCDataset) plot.getDataset());
+
+                // ★ 드래그 시 현재 타임프레임 캐시 경계 근접 여부 확인
+                checkAndPrefetchIfNeeded(currentTimeframe);
+
                 chartPanel.repaint();
             }
         });
@@ -208,10 +258,9 @@ public class CandleChartPanel extends JPanel {
         int[]    timeframes = {TF_1M, TF_30M, TF_1H,  TF_4H,  TF_1D, TF_1MON};
 
         for (int i = 0; i < labels.length; i++) {
-            final String label     = labels[i];
-            final int    timeframe = timeframes[i];
+            final int timeframe = timeframes[i];
 
-            JButton button = new JButton(label);
+            JButton button = new JButton(labels[i]);
             button.setBackground(Color.LIGHT_GRAY);
             button.setFocusPainted(false);
 
@@ -226,8 +275,8 @@ public class CandleChartPanel extends JPanel {
                 selectedButton = button;
                 currentTimeframe = timeframe;
 
-                // ★ refreshChart()가 backtestTargetTime을 참조하므로
-                //   백테스팅 시점이 자동으로 유지됩니다.
+                // 타임프레임 전환 시 해당 캐시만 초기화 (다른 TF 캐시는 유지)
+                resetCache(dbUnitOf(timeframe));
                 refreshChart();
             });
 
@@ -238,145 +287,448 @@ public class CandleChartPanel extends JPanel {
 
 
     // ════════════════════════════════════════════════════
+    //  ★ 뷰포트 페이징 — 전 타임프레임 공통
+    // ════════════════════════════════════════════════════
+
+    /**
+     * TF_4H는 DB에서 TF_1H로 조회하므로 캐시 키(DB unit)를 TF_1H로 변환.
+     * 나머지 타임프레임은 그대로.
+     */
+    private int dbUnitOf(int timeframe) {
+        return (timeframe == TF_4H) ? TF_1H : timeframe;
+    }
+
+    /**
+     * 리샘플링 비율: DB 조회 캔들 몇 개가 화면 캔들 1개로 합쳐지는지.
+     *
+     * TF_4H → 1H 데이터 4개 → 4H 캔들 1개  → 비율 4
+     * 나머지 → 1:1                           → 비율 1
+     *
+     * bufferMs에 이 비율을 곱해서 리샘플링 후에도
+     * MAX_VISIBLE_CANDLES 개를 충분히 채울 수 있게 보정합니다.
+     */
+    private int resampleRatioOf(int timeframe) {
+        return (timeframe == TF_4H) ? (TF_4H / TF_1H) : 1;
+    }
+
+    /** 전체 캐시 초기화 (종목/모드 변경 시) */
+    private void resetAllCaches() {
+        for (PageCache c : cacheMap.values()) c.reset();
+    }
+
+    /** 특정 DB unit 캐시만 초기화 */
+    private void resetCache(int dbUnit) {
+        PageCache c = cacheMap.get(dbUnit);
+        if (c != null) c.reset();
+    }
+
+    /**
+     * 뷰포트 기반 캔들 페이징 조회 (모든 타임프레임 공통 진입점).
+     *
+     * ── 분기 로직 ─────────────────────────────────────────────────
+     *  1) plot==null(생성자 첫 호출) or 캐시 미초기화
+     *     → targetTime 또는 현재 시각 기준 PAGE_BUFFER*2 구간 최초 로드
+     *  2) 뷰포트가 캐시 범위 안 → 캐시 반환 (DB 조회 없음)
+     *  3) 뷰포트가 캐시 밖으로 점프 → 뷰포트 중심 기준 동기 재조회
+     * ──────────────────────────────────────────────────────────────
+     *
+     * @param dbUnit     실제 DB 조회 unit (TF_4H 시 TF_1H 전달)
+     * @param targetTime 백테스팅 기준시각 (실시간이면 null)
+     */
+    private List<CandleDTO> fetchPagedCandles(String market, int dbUnit,
+                                               LocalDateTime targetTime) {
+        PageCache cache   = cacheMap.get(dbUnit);
+        // ★ 리샘플링 비율 반영: TF_4H는 1H 데이터를 4개씩 합치므로
+        //   버퍼를 4배 확보해야 리샘플링 후에도 MAX_VISIBLE_CANDLES 개를 채울 수 있음
+        long bufferMs     = (long)(PAGE_BUFFER * resampleRatioOf(currentTimeframe) * getCandleIntervalMs(dbUnit));
+
+        // ── 첫 로드 ──
+        if (plot == null || !cache.isInitialized()) {
+            long fetchTo   = (targetTime != null)
+                    ? java.sql.Timestamp.valueOf(targetTime).getTime()
+                    : System.currentTimeMillis();
+            long fetchFrom = fetchTo - bufferMs * 2;
+            return doFetchAndCache(cache, market, dbUnit, fetchFrom, fetchTo, targetTime);
+        }
+
+        DateAxis axis    = (DateAxis) plot.getDomainAxis();
+        double axisLower = axis.getRange().getLowerBound();
+        double axisUpper = axis.getRange().getUpperBound();
+
+        // ── 뷰포트 점프 → 동기 재조회 ──
+        if (axisUpper < cache.fromMs || axisLower > cache.toMs) {
+            long center    = (long)((axisLower + axisUpper) / 2);
+            long fetchFrom = center - bufferMs;
+            long fetchTo   = center + bufferMs;
+            System.out.printf("[Paging] unit=%d 점프 → 동기 재조회%n", dbUnit);
+            return doFetchAndCache(cache, market, dbUnit, fetchFrom, fetchTo, targetTime);
+        }
+
+        // ── 캐시 적중 ──
+        return cache.candles;
+    }
+
+    /**
+     * DB 범위 조회 후 캐시 갱신.
+     */
+    private List<CandleDTO> doFetchAndCache(PageCache cache, String market, int dbUnit,
+                                             long fetchFrom, long fetchTo,
+                                             LocalDateTime targetTime) {
+        ZoneId kst = ZoneId.of("Asia/Seoul");
+        LocalDateTime from = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(fetchFrom), kst);
+        LocalDateTime to   = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(fetchTo),   kst);
+
+        List<CandleDTO> result;
+        if (targetTime != null) {
+            result = candleDAO.getCandlesInRangeHistorical(market, dbUnit, from, to, targetTime);
+        } else {
+            result = candleDAO.getCandlesInRange(market, dbUnit, from, to);
+        }
+
+        // getCandlesInRange는 ASC 반환 보장
+        cache.candles = result;
+        cache.fromMs  = fetchFrom;
+        cache.toMs    = fetchTo;
+        System.out.printf("[Paging] unit=%d 조회: %s ~ %s → %d개%n", dbUnit, from, to, result.size());
+        return result;
+    }
+
+    /**
+     * 드래그/줌 후 캐시 경계 PREFETCH_THRESHOLD 이내 접근 시
+     * 백그라운드에서 새 범위를 미리 조회합니다.
+     */
+    private void checkAndPrefetchIfNeeded(int timeframe) {
+        int dbUnit      = dbUnitOf(timeframe);
+        PageCache cache = cacheMap.get(dbUnit);
+        if (!cache.isInitialized() || cache.prefetchInProgress) return;
+
+        DateAxis axis = (DateAxis) plot.getDomainAxis();
+        double lower  = axis.getRange().getLowerBound();
+        double upper  = axis.getRange().getUpperBound();
+        long cacheLen = cache.toMs - cache.fromMs;
+
+        boolean nearLeft  = lower < cache.fromMs + cacheLen * PREFETCH_THRESHOLD;
+        boolean nearRight = upper > cache.toMs   - cacheLen * PREFETCH_THRESHOLD;
+        if (!nearLeft && !nearRight) return;
+
+        cache.prefetchInProgress = true;
+
+        long center   = (long)((lower + upper) / 2);
+        // ★ 리샘플링 비율 반영: TF_4H는 4배 버퍼 필요
+        long bufferMs = (long)(PAGE_BUFFER * resampleRatioOf(timeframe) * getCandleIntervalMs(dbUnit));
+        long newFrom  = center - bufferMs;
+        long newTo    = center + bufferMs;
+
+        final String        mkt = currentMarket;
+        final LocalDateTime tgt = backtestTargetTime;
+        final int           tf  = timeframe;
+
+        new Thread(() -> {
+            ZoneId kst = ZoneId.of("Asia/Seoul");
+            LocalDateTime from = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(newFrom), kst);
+            LocalDateTime to   = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(newTo),   kst);
+
+            List<CandleDTO> fresh;
+            if (tgt != null) {
+                fresh = candleDAO.getCandlesInRangeHistorical(mkt, dbUnit, from, to, tgt);
+            } else {
+                fresh = candleDAO.getCandlesInRange(mkt, dbUnit, from, to);
+            }
+            System.out.printf("[Paging] unit=%d pre-fetch: %s ~ %s → %d개%n",
+                    dbUnit, from, to, fresh.size());
+
+            SwingUtilities.invokeLater(() -> {
+                cache.candles = fresh;
+                cache.fromMs  = newFrom;
+                cache.toMs    = newTo;
+                cache.prefetchInProgress = false;
+
+                // 현재 보고 있는 타임프레임일 때만 dataset 갱신
+                if (currentTimeframe == tf) {
+                    OHLCDataset ds = assembleDataset(mkt, tf, fresh, tgt);
+                    plot.setDataset(ds);
+                    updateYAxisRange(ds);
+                    chartPanel.repaint();
+                }
+            });
+        }, "Prefetch-u" + dbUnit).start();
+    }
+
+    /**
+     * pre-fetch 완료 후 타임프레임에 맞게 dataset 조립.
+     * (4H 리샘플링, liveCandle 병합 포함)
+     */
+    private OHLCDataset assembleDataset(String market, int timeframe,
+                                         List<CandleDTO> raw, LocalDateTime targetTime) {
+        List<CandleDTO> processed = applyResample(timeframe, raw);
+
+        if (targetTime == null && liveCandle != null) {
+            return mergeWithLiveCandle(market, timeframe, new ArrayList<>(processed));
+        }
+        return processed.isEmpty() ? emptyDataset(market) : buildDataset(market, processed);
+    }
+
+    /**
+     * raw 리스트에 타임프레임별 리샘플링을 적용합니다.
+     * TF_4H: resample4H, TF_1MON: resampleByMonth, 나머지: 그대로.
+     */
+    private List<CandleDTO> applyResample(int timeframe, List<CandleDTO> raw) {
+        if (timeframe == TF_4H)   return resample4H(raw);
+        if (timeframe == TF_1MON) return resampleByMonth(raw);
+        return raw;
+    }
+
+
+    // ════════════════════════════════════════════════════
     //  통합 데이터셋 생성
     // ════════════════════════════════════════════════════
 
     /**
-     * 실시간/백테스팅 모드에 따라 해당 타임프레임(unit) 캔들을 직접 조회합니다.
-     * DB의 market_candle 테이블에 unit 컬럼별로 사전 집계된 데이터가 있어야 합니다.
+     * 실시간/백테스팅 모드에 따라 해당 타임프레임 캔들을 조회합니다.
+     *
+     * ── 조회 전략 ──────────────────────────────────────────────────
+     *  TF_4H  → TF_1H 페이징 후 4H 리샘플링
+     *  TF_1MON → TF_1MON 페이징 (없으면 TF_1D 페이징 후 월봉 리샘플링)
+     *  나머지 → 해당 unit 페이징 (없으면 TF_1M 페이징 후 리샘플링)
+     * ──────────────────────────────────────────────────────────────
      */
     private OHLCDataset createDataset(String market, int timeframe, LocalDateTime targetTime) {
-        List<CandleDTO> list;
-        
-        // unit=240이 DB에 없으므로 4시간봉은 1시간봉(unit=60)을 4개씩 묶어 리샘플링
-        if (timeframe == TF_4H) {
-            int fetchLimit = (TF_4H / TF_1H) * MAX_CANDLE_COUNT; // 1시간봉 4배 조회
-            if (targetTime != null) {
-                list = candleDAO.getHistoricalCandles(market, TF_1H, targetTime, fetchLimit);
-            } else {
-                list = candleDAO.getCandles(market, TF_1H, fetchLimit);
-            }
-            if (list.isEmpty()) return emptyDataset(market);
-            Collections.reverse(list);
-            return buildDataset(market, resample4H(list));
+        int dbUnit = dbUnitOf(timeframe);
+        List<CandleDTO> raw = fetchPagedCandles(market, dbUnit, targetTime);
+
+        if (raw.isEmpty()) {
+            // DB에 해당 unit 데이터 없음 → 폴백
+            return fallbackDataset(market, timeframe, targetTime);
         }
 
-        if (targetTime != null) {
-            list = candleDAO.getHistoricalCandles(market, timeframe, targetTime, MAX_CANDLE_COUNT);
-        } else {
-            list = candleDAO.getCandles(market, timeframe, MAX_CANDLE_COUNT);
-        }
-
-        if (list.isEmpty()) return emptyDataset(market);
-
-        // DB 조회는 DESC → ASC로 뒤집기
-        Collections.reverse(list);
-
-        return buildDataset(market, list);
+        return buildDataset(market, applyResample(timeframe, raw));
     }
 
     /**
-     * 실시간 모드 전용: DB의 확정된 1분봉 데이터 + 현재 진행 중인 liveCandle을 합쳐 데이터셋 생성.
+     * DB에 해당 unit 데이터가 없을 때의 폴백 처리.
      *
-     * ── 동작 원리 ──────────────────────────────────────────────────
-     *  1) DB에서 최신 1분봉 목록을 가져옴 (liveCandle이 속하는 현재 분봉 제외)
-     *  2) 리샘플링 후 마지막에 liveCandle을 덧붙임
-     *     - 현재 타임프레임이 1분봉이면 liveCandle을 그냥 추가
-     *     - 상위 타임프레임이면 마지막 리샘플 캔들에 liveCandle을 병합
-     * ────────────────────────────────────────────────────────────────
+     * TF_1MON → TF_1D 페이징 후 월봉 리샘플링
+     * 나머지  → TF_1M 페이징 후 해당 TF 리샘플링
      */
+    private OHLCDataset fallbackDataset(String market, int timeframe, LocalDateTime targetTime) {
+        System.out.println("[CandleChart] unit=" + timeframe + " 데이터 없음 → 폴백");
+
+        List<CandleDTO> base;
+        if (timeframe == TF_1MON) {
+            // 일봉으로 월봉 리샘플링
+            base = fetchPagedCandles(market, TF_1D, targetTime);
+            if (!base.isEmpty()) return buildDataset(market, resampleByMonth(base));
+            // 일봉도 없으면 1분봉 폴백
+            base = fetchPagedCandles(market, TF_1M, targetTime);
+        } else {
+            base = fetchPagedCandles(market, TF_1M, targetTime);
+        }
+
+        if (base.isEmpty()) return emptyDataset(market);
+        return buildDataset(market, resampleByTimeframe(base, timeframe));
+    }
+
     /**
-     * 실시간 모드 전용: DB의 확정된 캔들 데이터(해당 타임프레임) + 현재 진행 중인 liveCandle을 합쳐 데이터셋 생성.
-     *
-     * ── 동작 원리 ──────────────────────────────────────────────────
-     *  1) DB에서 해당 타임프레임(unit)의 캔들을 직접 조회 (리샘플링 불필요)
-     *  2) liveCandle(1분 단위 실시간 캔들)을 마지막에 덧붙임
-     *     - 1분봉: liveCandle을 그냥 추가 (같은 분봉이면 대체)
-     *     - 상위 타임프레임: liveCandle이 마지막 DB 캔들과 같은 블록이면 병합,
-     *       아니면 새 블록으로 추가
-     * ────────────────────────────────────────────────────────────────
+     * 실시간 모드 전용: 캐시 재사용 + liveCandle 병합.
+     * 500ms 라이브 틱마다 호출. DB 재조회 없음.
      */
     private OHLCDataset createDatasetWithLiveCandle(String market, int timeframe) {
-    	// unit=240이 DB에 없으므로 4시간봉은 1시간봉(unit=60)으로 리샘플링
-        if (timeframe == TF_4H) {
-            int fetchLimit = (TF_4H / TF_1H) * MAX_CANDLE_COUNT;
-            List<CandleDTO> rawList = candleDAO.getCandles(market, TF_1H, fetchLimit);
-            Collections.reverse(rawList);
+        int dbUnit = dbUnitOf(timeframe);
+        List<CandleDTO> raw = new ArrayList<>(cacheMap.get(dbUnit).candles);
+        List<CandleDTO> processed = applyResample(timeframe, raw);
 
-            if (liveCandle == null) {
-                if (rawList.isEmpty()) return emptyDataset(market);
-                return buildDataset(market, resample4H(rawList));
-            }
-
-            // liveCandle(1분봉)을 1시간봉 rawList에 붙여서 함께 리샘플링
-            // 중복 방지: rawList 마지막과 liveCandle이 같은 시간이면 제거
-            if (!rawList.isEmpty() && liveCandleMinuteStart != null) {
-                CandleDTO last = rawList.get(rawList.size() - 1);
-                LocalDateTime lastHour = last.getCandleDateTimeKst()
-                        .truncatedTo(java.time.temporal.ChronoUnit.HOURS);
-                LocalDateTime liveHour = liveCandle.getCandleDateTimeKst()
-                        .truncatedTo(java.time.temporal.ChronoUnit.HOURS);
-                if (lastHour.equals(liveHour)) {
-                    rawList.remove(rawList.size() - 1);
-                }
-            }
-            rawList.add(liveCandle);
-            return buildDataset(market, resample4H(rawList));
-        }
-    	
-        // 해당 타임프레임 단위로 DB에서 직접 조회
-        List<CandleDTO> list = candleDAO.getCandles(market, timeframe, MAX_CANDLE_COUNT);
-        Collections.reverse(list); // DESC → ASC
-
-        // liveCandle이 없으면 DB 데이터만으로 렌더링
         if (liveCandle == null) {
-            if (list.isEmpty()) return emptyDataset(market);
-            return buildDataset(market, list);
+            return processed.isEmpty() ? emptyDataset(market) : buildDataset(market, processed);
         }
-
-        if (timeframe == TF_1M) {
-            // ── 1분봉 ──
-            // DB 마지막 캔들이 liveCandle과 같은 분이면 제거 후 liveCandle로 대체
-            if (!list.isEmpty() && liveCandleMinuteStart != null) {
-                CandleDTO last = list.get(list.size() - 1);
-                LocalDateTime lastMinute = last.getCandleDateTimeKst()
-                        .truncatedTo(java.time.temporal.ChronoUnit.MINUTES);
-                if (lastMinute.equals(liveCandleMinuteStart)) {
-                    list.remove(list.size() - 1);
-                }
-            }
-            list.add(liveCandle);
-        } else {
-            // ── 상위 타임프레임 ──
-            // liveCandle(1분봉)이 DB 마지막 캔들과 같은 타임프레임 블록이면 종가/고가/저가 병합
-            if (!list.isEmpty()) {
-                CandleDTO last = list.get(list.size() - 1);
-                String lastBlock = calcBlockKey(last.getCandleDateTimeKst(), timeframe);
-                String liveBlock = calcBlockKey(liveCandle.getCandleDateTimeKst(), timeframe);
-
-                if (lastBlock.equals(liveBlock)) {
-                    // 같은 블록: DB 마지막 캔들의 종가/고/저를 실시간 가격으로 갱신
-                    // (원본 객체를 직접 수정하지 않고 복사본 사용)
-                    CandleDTO merged = copyCandle(last);
-                    merged.setTradePrice(liveCandle.getTradePrice());
-                    merged.setHighPrice(Math.max(last.getHighPrice(), liveCandle.getHighPrice()));
-                    merged.setLowPrice(Math.min(last.getLowPrice(), liveCandle.getLowPrice()));
-                    list.set(list.size() - 1, merged);
-                } else {
-                    // 새 블록 시작: liveCandle을 해당 타임프레임 블록의 시작 캔들로 추가
-                    CandleDTO newBlock = copyCandle(liveCandle);
-                    newBlock.setUnit(timeframe);
-                    list.add(newBlock);
-                }
-            } else {
-                list.add(liveCandle);
-            }
-        }
-
-        return buildDataset(market, list);
+        return mergeWithLiveCandle(market, timeframe, new ArrayList<>(processed));
     }
 
-    /** CandleDTO 얕은 복사 (DB 원본 객체 보호용) */
+    /**
+     * liveCandle을 processed 리스트에 병합 후 dataset 반환.
+     *
+     * ── 병합 규칙 ──────────────────────────────────────────────────
+     *  TF_1M:    같은 분봉이면 대체, 아니면 추가
+     *  상위 TF:  같은 블록이면 종가/고/저 갱신, 새 블록이면 추가
+     * ──────────────────────────────────────────────────────────────
+     */
+    private OHLCDataset mergeWithLiveCandle(String market, int timeframe,
+                                             List<CandleDTO> processed) {
+        if (processed.isEmpty()) {
+            processed.add(liveCandle);
+            return buildDataset(market, processed);
+        }
+
+        CandleDTO last = processed.get(processed.size() - 1);
+
+        if (timeframe == TF_1M) {
+            if (liveCandleMinuteStart != null) {
+                LocalDateTime lastMinute = last.getCandleDateTimeKst().truncatedTo(ChronoUnit.MINUTES);
+                if (lastMinute.equals(liveCandleMinuteStart)) {
+                    processed.remove(processed.size() - 1);
+                }
+            }
+            processed.add(liveCandle);
+        } else {
+            String lastBlock = calcBlockKey(last.getCandleDateTimeKst(), timeframe);
+            String liveBlock = calcBlockKey(liveCandle.getCandleDateTimeKst(), timeframe);
+
+            if (lastBlock.equals(liveBlock)) {
+                CandleDTO merged = copyCandle(last);
+                merged.setTradePrice(liveCandle.getTradePrice());
+                merged.setHighPrice(Math.max(last.getHighPrice(), liveCandle.getHighPrice()));
+                merged.setLowPrice(Math.min(last.getLowPrice(), liveCandle.getLowPrice()));
+                processed.set(processed.size() - 1, merged);
+            } else {
+                CandleDTO newBlock = copyCandle(liveCandle);
+                newBlock.setUnit(timeframe);
+                processed.add(newBlock);
+            }
+        }
+
+        return buildDataset(market, processed);
+    }
+
+
+    // ════════════════════════════════════════════════════
+    //  리샘플링
+    // ════════════════════════════════════════════════════
+
+    private List<CandleDTO> resampleByTimeframe(List<CandleDTO> list, int timeframe) {
+        if (timeframe == TF_4H)   return resample4H(list);
+        if (timeframe == TF_1MON) return resampleByMonth(list);
+        return resampleFixedMinutes(list, timeframe);
+    }
+
+    private List<CandleDTO> resampleFixedMinutes(List<CandleDTO> src, int blockMinutes) {
+        List<CandleDTO> result   = new ArrayList<>();
+        List<CandleDTO> group    = new ArrayList<>();
+        String          groupKey = null;
+
+        for (CandleDTO c : src) {
+            String key = calcBlockKey(c.getCandleDateTimeKst(), blockMinutes);
+            if (!key.equals(groupKey)) {
+                if (!group.isEmpty()) result.add(mergeGroup(group, blockMinutes));
+                group.clear();
+                groupKey = key;
+            }
+            group.add(c);
+        }
+        if (!group.isEmpty()) result.add(mergeGroup(group, blockMinutes));
+        return result;
+    }
+
+    private List<CandleDTO> resampleByMonth(List<CandleDTO> src) {
+        List<CandleDTO> result   = new ArrayList<>();
+        List<CandleDTO> group    = new ArrayList<>();
+        String          groupKey = null;
+
+        for (CandleDTO c : src) {
+            String key = c.getCandleDateTimeKst().getYear() + "-"
+                       + String.format("%02d", c.getCandleDateTimeKst().getMonthValue());
+            if (!key.equals(groupKey)) {
+                if (!group.isEmpty()) result.add(mergeGroup(group, TF_1MON));
+                group.clear();
+                groupKey = key;
+            }
+            group.add(c);
+        }
+        if (!group.isEmpty()) result.add(mergeGroup(group, TF_1MON));
+        return result;
+    }
+
+    private CandleDTO mergeGroup(List<CandleDTO> group, int blockMinutes) {
+        CandleDTO first = group.get(0);
+        CandleDTO last  = group.get(group.size() - 1);
+
+        LocalDateTime kst = first.getCandleDateTimeKst();
+        LocalDateTime blockStart;
+        if (blockMinutes == TF_1MON) {
+            blockStart = kst.withDayOfMonth(1).withHour(0).withMinute(0).withSecond(0).withNano(0);
+        } else {
+            LocalDateTime KST_EPOCH = LocalDateTime.of(1970, 1, 1, 9, 0);
+            long epochMinutes = ChronoUnit.MINUTES.between(KST_EPOCH, kst);
+            long blockIdx     = (epochMinutes / blockMinutes) * blockMinutes;
+            blockStart = KST_EPOCH.plusMinutes(blockIdx);
+        }
+
+        CandleDTO m = new CandleDTO();
+        m.setMarket(first.getMarket());
+        m.setCandleDateTimeKst(blockStart);
+        m.setCandleDateTimeUtc(blockStart.minusHours(9));
+        m.setOpeningPrice(first.getOpeningPrice());
+        m.setTradePrice(last.getTradePrice());
+        m.setHighPrice(group.stream().mapToDouble(CandleDTO::getHighPrice).max().orElse(0));
+        m.setLowPrice(group.stream().mapToDouble(CandleDTO::getLowPrice).min().orElse(0));
+        m.setCandleAccTradeVolume(group.stream().mapToDouble(CandleDTO::getCandleAccTradeVolume).sum());
+        m.setUnit(blockMinutes);
+        return m;
+    }
+
+    private List<CandleDTO> resample4H(List<CandleDTO> hourList) {
+        List<CandleDTO> result = new ArrayList<>();
+        List<CandleDTO> group  = new ArrayList<>();
+        String groupKey = null;
+
+        for (CandleDTO candle : hourList) {
+            String key = calcBlockKey(candle.getCandleDateTimeKst(), TF_4H);
+            if (!key.equals(groupKey)) {
+                if (!group.isEmpty()) result.add(merge4HGroup(group));
+                group.clear();
+                groupKey = key;
+            }
+            group.add(candle);
+        }
+        if (!group.isEmpty()) result.add(merge4HGroup(group));
+        return result;
+    }
+
+    private CandleDTO merge4HGroup(List<CandleDTO> group) {
+        CandleDTO first = group.get(0);
+        CandleDTO last  = group.get(group.size() - 1);
+
+        LocalDateTime kst = first.getCandleDateTimeKst();
+        LocalDateTime KST_EPOCH = LocalDateTime.of(1970, 1, 1, 9, 0);
+        long epochMinutes = ChronoUnit.MINUTES.between(KST_EPOCH, kst);
+        long blockStart   = (epochMinutes / TF_4H) * TF_4H;
+        LocalDateTime blockStartTime = KST_EPOCH.plusMinutes(blockStart);
+
+        CandleDTO m = new CandleDTO();
+        m.setMarket(first.getMarket());
+        m.setCandleDateTimeKst(blockStartTime);
+        m.setCandleDateTimeUtc(blockStartTime.minusHours(9));
+        m.setOpeningPrice(first.getOpeningPrice());
+        m.setTradePrice(last.getTradePrice());
+        m.setHighPrice(group.stream().mapToDouble(CandleDTO::getHighPrice).max().orElse(0));
+        m.setLowPrice(group.stream().mapToDouble(CandleDTO::getLowPrice).min().orElse(0));
+        m.setCandleAccTradeVolume(group.stream().mapToDouble(CandleDTO::getCandleAccTradeVolume).sum());
+        m.setUnit(TF_4H);
+        return m;
+    }
+
+
+    // ════════════════════════════════════════════════════
+    //  데이터셋 / DTO 유틸리티
+    // ════════════════════════════════════════════════════
+
+    private OHLCDataset buildDataset(String market, List<CandleDTO> list) {
+        int count = list.size();
+        Date[]   date   = new Date[count];
+        double[] high   = new double[count], low    = new double[count];
+        double[] open   = new double[count], close  = new double[count];
+        double[] volume = new double[count];
+
+        for (int i = 0; i < count; i++) {
+            CandleDTO dto = list.get(i);
+            date[i]   = java.sql.Timestamp.valueOf(dto.getCandleDateTimeKst());
+            open[i]   = dto.getOpeningPrice();
+            high[i]   = dto.getHighPrice();
+            low[i]    = dto.getLowPrice();
+            close[i]  = dto.getTradePrice();
+            volume[i] = dto.getCandleAccTradeVolume();
+        }
+        return new DefaultHighLowDataset(market, date, high, low, open, close, volume);
+    }
+
     private CandleDTO copyCandle(CandleDTO src) {
         CandleDTO c = new CandleDTO();
         c.setMarket(src.getMarket());
@@ -399,16 +751,10 @@ public class CandleChartPanel extends JPanel {
                 new double[0], new double[0], new double[0]);
     }
 
-    /**
-     * 주어진 시각이 속하는 타임프레임 블록 키를 반환합니다.
-     * liveCandle을 상위 타임프레임 블록에 병합할 때 사용됩니다.
-     */
     private String calcBlockKey(LocalDateTime kst, int timeframeMinutes) {
         if (timeframeMinutes == TF_1MON) {
             return kst.getYear() + "-" + String.format("%02d", kst.getMonthValue());
         }
-        // KST(UTC+9) 기준으로 블록 경계를 맞추기 위해 기준점을 1970-01-01 09:00(KST 자정)으로 설정
-        // UTC 00:00 기준으로 계산하면 KST 데이터의 블록 경계가 9시간 어긋나 캔들이 틀린 위치에 그려짐
         long epochMinutes = ChronoUnit.MINUTES.between(LocalDateTime.of(1970, 1, 1, 9, 0), kst);
         return Long.toString(epochMinutes / timeframeMinutes);
     }
@@ -429,10 +775,8 @@ public class CandleChartPanel extends JPanel {
         updateXAxisRange(dataset);
         updateYAxisRange(dataset);
         drawCurrentPriceDashLine(dataset);
-        applyDateAxisFormat();
     }
 
-    /** 타임프레임에 맞는 X축 날짜 포맷 적용 */
     private void applyDateAxisFormat() {
         DateAxis domainAxis = (DateAxis) plot.getDomainAxis();
         String fmt;
@@ -442,14 +786,6 @@ public class CandleChartPanel extends JPanel {
         domainAxis.setDateFormatOverride(new SimpleDateFormat(fmt));
     }
 
-    /**
-     * X축 범위를 최신 displayCount개 캔들이 보이도록 설정합니다.
-     *
-     * ── zoom 후 캔들 간격이 벌어지는 문제 해결 ──────────────────
-     * 기존 코드는 하나의 고정된 oneBarInterval을 사용했기 때문에
-     * zoom 후 범위가 달라지면 캔들 간격 계산이 어긋났습니다.
-     * 수정: 타임프레임에서 직접 밀리초 단위 캔들 간격을 계산합니다.
-     */
     private void updateXAxisRange(OHLCDataset dataset) {
         int itemCount = dataset.getItemCount(0);
         if (itemCount <= 0) return;
@@ -459,23 +795,17 @@ public class CandleChartPanel extends JPanel {
         DateAxis domainAxis = (DateAxis) plot.getDomainAxis();
         double lastTick  = dataset.getXValue(0, itemCount - 1);
         double firstTick = dataset.getXValue(0, itemCount - displayCount);
-
-        // 타임프레임에서 정확한 캔들 간격(ms) 산출
         double candleIntervalMs = getCandleIntervalMs(currentTimeframe);
 
-        // 오른쪽에 빈 공간(라이브 캔들 위한 여유) + 왼쪽에 반 칸 여유
+        // 오른쪽 여백: 월봉은 1칸(다음 달 시작까지), 나머지는 라이브캔들 공간 4.5칸
+        double rightPad = (currentTimeframe == TF_1MON) ? 1.0 : 4.5;
         domainAxis.setRange(
             firstTick  - candleIntervalMs * 0.5,
-            lastTick   + candleIntervalMs * 4.5
+            lastTick   + candleIntervalMs * rightPad
         );
     }
 
-    /**
-     * 타임프레임(분)을 밀리초로 변환합니다.
-     * 1달봉은 30일 * 24h * 60m 기준.
-     */
-    //여기 계속 고치네;;
-    private double getCandleIntervalMs(int timeframeMinutes) { 
+    private double getCandleIntervalMs(int timeframeMinutes) {
         long minutes = (timeframeMinutes == TF_1MON) ? 30L * 24 * 60 : timeframeMinutes;
         return minutes * 60_000.0;
     }
@@ -512,7 +842,6 @@ public class CandleChartPanel extends JPanel {
             NumberAxis yAxis = (NumberAxis) plot.getRangeAxis();
             double margin = (maxHigh - minLow) * 0.05;
             yAxis.setRange(minLow - margin, maxHigh + margin);
-            // 범위가 바뀌어도 소수점 포맷 유지
             yAxis.setNumberFormatOverride(buildPriceFormat());
         }
     }
@@ -539,29 +868,13 @@ public class CandleChartPanel extends JPanel {
 
 
     // ════════════════════════════════════════════════════
-    //  가격 포맷 유틸리티
+    //  가격 포맷
     // ════════════════════════════════════════════════════
 
-    /**
-     * 과학적 표기법 없이 소수점 가격을 읽기 쉽게 표시하는 포맷을 반환합니다.
-     *
-     * 원화(KRW) 기반 코인은 보통 정수지만,
-     * SHIB 등 소수점이 많은 코인은 9.15E-3 대신 0.00915 형태로 표시합니다.
-     *
-     * 전략: 항상 최소 0자리~최대 10자리 소수점 표시, 지수 표기 사용 안 함.
-     */
     private DecimalFormat buildPriceFormat() {
-        // "#,##0.##########" → 정수부 콤마, 소수점 최대 10자리, 불필요한 0 생략
-        DecimalFormat df = new DecimalFormat("#,##0.##########");
-        // 지수 표기를 완전히 비활성화하기 위해 multiplier는 기본값(1)으로 유지
-        // Java DecimalFormat은 기본적으로 지수를 사용하지 않으므로 이것으로 충분합니다.
-        return df;
+        return new DecimalFormat("#,##0.##########");
     }
 
-    /**
-     * 가격 값을 화면 표시용 문자열로 변환합니다.
-     * 소수점 가격(0.001234 등)도 과학적 표기 없이 그대로 표시합니다.
-     */
     private String formatPrice(double price) {
         return buildPriceFormat().format(price);
     }
@@ -601,10 +914,8 @@ public class CandleChartPanel extends JPanel {
 
             g2.setColor(Color.WHITE);
             g2.setFont(new Font("Nanum Gothic", Font.BOLD, 12));
-            // ── 소수점 표기 수정: 과학적 표기법 대신 일반 소수점 ──
             String text = formatPrice(overlayPrice);
             FontMetrics fm = g2.getFontMetrics();
-            // 텍스트가 박스 너비를 초과하면 boxW를 동적으로 늘림
             int textW = fm.stringWidth(text);
             if (textW + 10 > boxW) {
                 g2.setColor(overlayRising ? Color.RED : Color.BLUE);
@@ -612,53 +923,38 @@ public class CandleChartPanel extends JPanel {
                 g2.setColor(Color.WHITE);
             }
             g2.drawString(text, boxX + 5, boxY + (boxH + fm.getAscent() - fm.getDescent()) / 2);
-
             g2.dispose();
         }
     }
 
 
     // ════════════════════════════════════════════════════
-    //  줌 — 타임프레임 기반 정확한 간격 유지
+    //  줌
     // ════════════════════════════════════════════════════
 
-    /**
-     * 마우스 휠 줌 처리.
-     *
-     * ── 기존 문제 ─────────────────────────────────────────
-     * 이전 구현은 현재 범위(length)에 비율 factor를 곱했기 때문에
-     * 줌 후에도 캔들 간격이 데이터 간격(분봉 ms)과 달라져서
-     * CandlestickRenderer의 자동 너비 계산이 어긋났습니다.
-     *
-     * ── 수정 ──────────────────────────────────────────────
-     * 현재 보이는 캔들 수를 계산 → 1개 증감 방식으로 캔들 수를 조절 →
-     * 캔들 수 × 캔들 간격(ms)으로 새 범위를 설정합니다.
-     * 이렇게 하면 항상 정수 개수의 캔들이 정확한 간격으로 표시됩니다.
-     */
     private void handleFixedRightZoom(int wheelRotation) {
         DateAxis domainAxis = (DateAxis) plot.getDomainAxis();
         OHLCDataset dataset = (OHLCDataset) plot.getDataset();
         if (dataset.getItemCount(0) <= 1) return;
 
-        double candleMs = getCandleIntervalMs(currentTimeframe);
-        double upper    = domainAxis.getRange().getUpperBound();
-        double length   = domainAxis.getRange().getLength();
-
-        // 현재 표시 중인 캔들 수 추정 (여유 공간 제외)
+        double candleMs  = getCandleIntervalMs(currentTimeframe);
+        double upper     = domainAxis.getRange().getUpperBound();
+        double length    = domainAxis.getRange().getLength();
         int visibleCount = (int) Math.round(length / candleMs);
 
-        // 줌 인: 캔들 수 감소 / 줌 아웃: 캔들 수 증가
         if (wheelRotation > 0) {
-            visibleCount = Math.max(5, visibleCount + 5);   // 줌 아웃
+            // 줌 아웃 — MAX_VISIBLE_CANDLES 초과 불가
+            visibleCount = Math.min(MAX_VISIBLE_CANDLES, visibleCount + 5);
         } else {
-            visibleCount = Math.max(5, visibleCount - 5);   // 줌 인
+            // 줌 인 — MIN_VISIBLE_CANDLES 미만 불가
+            visibleCount = Math.max(MIN_VISIBLE_CANDLES, visibleCount - 5);
         }
 
-        // 새 범위 = 캔들 수 × 캔들 간격 (오른쪽 고정)
         double newLen = visibleCount * candleMs;
         domainAxis.setRange(upper - newLen, upper);
 
         updateYAxisRange(dataset);
+        checkAndPrefetchIfNeeded(currentTimeframe); // ★ 줌 후 pre-fetch 체크
         chartPanel.repaint();
     }
 
@@ -677,49 +973,32 @@ public class CandleChartPanel extends JPanel {
         if (liveTimer != null) liveTimer.stop();
     }
 
-    /**
-     * 500ms마다 호출되는 라이브 틱.
-     *
-     * ── 로직 ──────────────────────────────────────────────
-     *  1) 현재 분봉 시작 시각(currentMinuteStart)을 계산합니다.
-     *  2) liveCandleMinuteStart와 다르면 → 분봉이 넘어간 것이므로:
-     *     a) 기존 liveCandle을 버림 (DB에 저장하지 않음 — DB가 이미 확정 데이터 가짐)
-     *     b) DB에서 직전 분봉 OHLC를 가져와 liveCandle로 대체
-     *     c) liveCandleMinuteStart를 현재 분으로 업데이트
-     *  3) latestLivePrice로 liveCandle의 종가/고가/저가를 업데이트합니다.
-     *  4) 차트를 갱신합니다.
-     * ────────────────────────────────────────────────────────
-     */
     private void onLiveTick() {
         if (backtestTargetTime != null || latestLivePrice <= 0) return;
 
-        // ★ 수정됨: PC 로컬 시간이 아닌 거래소 서버 타임스탬프 기준 시간 계산
         LocalDateTime serverNow;
         if (latestLiveTimestamp > 0) {
-            // 웹소켓에서 받은 서버 타임스탬프(ms)를 LocalDateTime KST로 변환
-            serverNow = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(latestLiveTimestamp), java.time.ZoneId.of("Asia/Seoul"));
+            serverNow = LocalDateTime.ofInstant(
+                    java.time.Instant.ofEpochMilli(latestLiveTimestamp),
+                    ZoneId.of("Asia/Seoul"));
         } else {
-            // 웹소켓 데이터를 아직 못 받았을 때의 임시 방편
             serverNow = LocalDateTime.now();
         }
 
-        // 현재 시간을 분 단위로 절사 (이제 PC 시간이 달라도 거래소 서버 시간에 정확히 맞춰짐)
-        LocalDateTime currentMinuteStart = serverNow.truncatedTo(java.time.temporal.ChronoUnit.MINUTES);
+        LocalDateTime currentMinuteStart = serverNow.truncatedTo(ChronoUnit.MINUTES);
 
-        // ── 분봉 경계 감지: 새로운 분으로 넘어갔으면 liveCandle 교체 ──
         if (liveCandleMinuteStart == null || !liveCandleMinuteStart.equals(currentMinuteStart)) {
             liveCandleMinuteStart = currentMinuteStart;
             liveCandle = createNewLiveCandle(latestLivePrice, currentMinuteStart);
         }
 
-        // ── 현재가로 라이브 캔들 업데이트 ──
         double price = latestLivePrice;
         liveCandle.setTradePrice(price);
         liveCandle.setHighPrice(Math.max(liveCandle.getHighPrice(), price));
         liveCandle.setLowPrice(Math.min(liveCandle.getLowPrice(), price));
 
-        // ── 차트 갱신 ──
         SwingUtilities.invokeLater(() -> {
+            // 캐시 재사용 — DB 재조회 없음
             OHLCDataset dataset = createDatasetWithLiveCandle(currentMarket, currentTimeframe);
             plot.setDataset(dataset);
             updateYAxisRange(dataset);
@@ -727,31 +1006,16 @@ public class CandleChartPanel extends JPanel {
         });
     }
 
-    /**
-     * 외부(WebSocket 콜백 등)에서 현재가를 주입합니다.
-     * 백테스팅 모드에서는 무시됩니다.
-     */
-    public void setLatestPriceFromWebSocket(String wsMarket, double price) {
+    public void setLatestPriceFromWebSocket(double price, long serverTimestamp) {
         if (backtestTargetTime != null) return;
-        
-        // 추가: 현재 종목과 웹소켓에서 온 종목이 다르면 가격 업데이트 무시
-        if (!this.currentMarket.equals(wsMarket)) return; 
-        
-        this.latestLivePrice = price;
+        this.latestLivePrice     = price;
+        this.latestLiveTimestamp = serverTimestamp;
     }
 
-    /**
-     * 서버 타임스탬프 없이 가격만 전달받는 경우 (UpbitWebSocket 호환용).
-     * trade_price와 함께 ticker의 timestamp 필드를 파싱하도록 UpbitWebSocket을 수정하는 것이 권장되지만,
-     * 파싱 실패 시에도 동작하도록 PC 시간 기반 fallback을 유지합니다.
-     */
     public void setLatestPriceFromWebSocket(double price) {
         if (backtestTargetTime != null) return;
         this.latestLivePrice = price;
-        // serverTimestamp를 -1로 두면 onLiveTick()에서 LocalDateTime.now() fallback 사용
     }
-
-    
 
     private CandleDTO createNewLiveCandle(double price, LocalDateTime minuteStart) {
         CandleDTO c = new CandleDTO();
@@ -765,77 +1029,6 @@ public class CandleChartPanel extends JPanel {
         c.setTimestamp(System.currentTimeMillis());
         c.setUnit(1);
         return c;
-    }
-
-
-    // ════════════════════════════════════════════════════
-    //  리샘플링
-    // ════════════════════════════════════════════════════
-
-    /**
-     * 1시간봉(unit=60) 리스트를 4시간봉으로 리샘플링합니다.
-     * KST 자정(00:00) 기준으로 0~3시, 4~7시, 8~11시, 12~15시, 16~19시, 20~23시 블록으로 나눕니다.
-     */
-    private List<CandleDTO> resample4H(List<CandleDTO> hourList) {
-        List<CandleDTO> result = new ArrayList<>();
-        List<CandleDTO> group  = new ArrayList<>();
-        String groupKey = null;
-
-        for (CandleDTO candle : hourList) {
-            String key = calcBlockKey(candle.getCandleDateTimeKst(), TF_4H);
-            if (!key.equals(groupKey)) {
-                if (!group.isEmpty()) result.add(merge4HGroup(group));
-                group.clear();
-                groupKey = key;
-            }
-            group.add(candle);
-        }
-        if (!group.isEmpty()) result.add(merge4HGroup(group));
-        return result;
-    }
-
-    private CandleDTO merge4HGroup(List<CandleDTO> group) {
-        CandleDTO first = group.get(0);
-        CandleDTO last  = group.get(group.size() - 1);
-
-        // 블록 시작 시각: KST 기준 4시간 경계 (0, 4, 8, 12, 16, 20시)
-        LocalDateTime kst = first.getCandleDateTimeKst();
-        LocalDateTime KST_EPOCH = LocalDateTime.of(1970, 1, 1, 9, 0);
-        long epochMinutes = ChronoUnit.MINUTES.between(KST_EPOCH, kst);
-        long blockStart   = (epochMinutes / TF_4H) * TF_4H;
-        LocalDateTime blockStartTime = KST_EPOCH.plusMinutes(blockStart);
-
-        CandleDTO m = new CandleDTO();
-        m.setMarket(first.getMarket());
-        m.setCandleDateTimeKst(blockStartTime);
-        m.setCandleDateTimeUtc(blockStartTime.minusHours(9));
-        m.setOpeningPrice(first.getOpeningPrice());
-        m.setTradePrice(last.getTradePrice());
-        m.setHighPrice(group.stream().mapToDouble(CandleDTO::getHighPrice).max().orElse(0));
-        m.setLowPrice(group.stream().mapToDouble(CandleDTO::getLowPrice).min().orElse(0));
-        m.setCandleAccTradeVolume(group.stream().mapToDouble(CandleDTO::getCandleAccTradeVolume).sum());
-        m.setUnit(TF_4H);
-        return m;
-    }
-    
-    
-    private OHLCDataset buildDataset(String market, List<CandleDTO> list) {
-        int count = list.size();
-        Date[]   date   = new Date[count];
-        double[] high   = new double[count], low   = new double[count];
-        double[] open   = new double[count], close = new double[count];
-        double[] volume = new double[count];
-
-        for (int i = 0; i < count; i++) {
-            CandleDTO dto = list.get(i);
-            date[i]   = java.sql.Timestamp.valueOf(dto.getCandleDateTimeKst());
-            open[i]   = dto.getOpeningPrice();
-            high[i]   = dto.getHighPrice();
-            low[i]    = dto.getLowPrice();
-            close[i]  = dto.getTradePrice();
-            volume[i] = dto.getCandleAccTradeVolume();
-        }
-        return new DefaultHighLowDataset(market, date, high, low, open, close, volume);
     }
 
 
@@ -857,20 +1050,18 @@ public class CandleChartPanel extends JPanel {
     }
 
 
+    // ════════════════════════════════════════════════════
+    //  공개 API
+    // ════════════════════════════════════════════════════
+
     /** 코인 종목 변경 */
     public void changeMarket(String coinSymbol) {
         this.currentMarket = "KRW-" + coinSymbol;
         liveCandle = null;
         liveCandleMinuteStart = null;
-        
-        // 추가: 이전 코인의 가격 및 시간 정보 초기화
-        this.latestLivePrice = -1;
-        this.latestLiveTimestamp = -1;
-        
+        resetAllCaches(); // 종목 바뀌면 모든 캐시 초기화
         refreshChart();
-        if (backtestTargetTime == null) {
-            connectWebSocket();
-        }
+        if (backtestTargetTime == null) connectWebSocket();
     }
 
     /** 백테스팅 모드로 전환 */
@@ -879,6 +1070,7 @@ public class CandleChartPanel extends JPanel {
         disconnectWebSocket();
         liveCandle = null;
         liveCandleMinuteStart = null;
+        resetAllCaches();
         this.backtestTargetTime = targetTime;
 
         SwingUtilities.invokeLater(() -> {
@@ -897,6 +1089,7 @@ public class CandleChartPanel extends JPanel {
         this.backtestTargetTime = null;
         liveCandle = null;
         liveCandleMinuteStart = null;
+        resetAllCaches();
         startLiveTimer();
         connectWebSocket();
         refreshChart();
