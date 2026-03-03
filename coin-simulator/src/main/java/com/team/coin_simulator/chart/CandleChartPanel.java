@@ -34,10 +34,7 @@ import org.jfree.data.xy.OHLCDataset;
  *  3. 실시간 라이브 캔들 업데이트 (Swing Timer 기반)
  *  4. 백테스팅 모드: targetTime 기준 과거 데이터만 표시
  *  5. ★ 모든 타임프레임 뷰포트 페이징
- *     - 드래그/줌 시 화면 범위 + 버퍼(PAGE_BUFFER)만큼만 DB 조회
- *     - 캐시 범위의 25% 이내 접근 시 백그라운드 pre-fetch
- *     - TF_4H: TF_1H 데이터를 페이징 후 리샘플링
- *     - TF_1MON DB 없음: TF_1D 페이징 후 월봉 리샘플링
+ *  6. ★ 보조지표: MA5/MA20/MA60, 볼린저 밴드, 거래량 오버레이 (드롭다운 ON/OFF)
  * ────────────────────────────────────────────────────────
  */
 public class CandleChartPanel extends JPanel {
@@ -48,9 +45,8 @@ public class CandleChartPanel extends JPanel {
     private static final int TF_1H   = 60;
     private static final int TF_4H   = 240;
     private static final int TF_1D   = 1440;
-    private static final int TF_1MON = 43200; // 30일 기준
+    private static final int TF_1MON = 43200;
 
-    /** 타임프레임별 화면 기본 표시 캔들 수 */
     private static final int DISPLAY_1M   = 55;
     private static final int DISPLAY_30M  = 55;
     private static final int DISPLAY_1H   = 55;
@@ -58,42 +54,34 @@ public class CandleChartPanel extends JPanel {
     private static final int DISPLAY_1D   = 55;
     private static final int DISPLAY_1MON = 55;
 
-    // ── ★ 뷰포트 페이징 설정 ────────────────────────────
-    /**
-     * 뷰포트 양쪽으로 미리 로드할 버퍼 캔들 수.
-     * 화면에 55개가 보이면 실제 캐시는 최대 55 + PAGE_BUFFER*2 개.
-     */
-    private static final int PAGE_BUFFER = 300;
-
-    /**
-     * 캐시의 몇 % 이내로 뷰포트가 접근하면 pre-fetch 시작.
-     * 0.25 = 앞/뒤 25% 이내 진입 시.
-     */
+    private static final int    PAGE_BUFFER        = 300;
     private static final double PREFETCH_THRESHOLD = 0.25;
+    private static final int    MIN_VISIBLE_CANDLES = 5;
+    private static final int    MAX_VISIBLE_CANDLES = 200;
 
-    // ── ★ 줌 한도 설정 ──────────────────────────────────
-    /** 줌 인 최소 캔들 수 — 이보다 더 확대 불가 */
-    private static final int MIN_VISIBLE_CANDLES = 5;
+    // ── 보조지표 ON/OFF 상태 ─────────────────────────────
+    private boolean showMA5       = false;
+    private boolean showMA20      = false;
+    private boolean showMA60      = false;
+    private boolean showBollinger = false;
+    private boolean showVolume    = false;
 
-    /**
-     * 줌 아웃 최대 캔들 수 — 이보다 더 축소 불가.
-     * 1분봉 200개 = 약 3.3시간, 1일봉 200개 = 약 200일.
-     */
-    private static final int MAX_VISIBLE_CANDLES = 200;
+    /** 볼린저 밴드 파라미터 */
+    private static final int    BB_PERIOD     = 20;
+    private static final double BB_MULTIPLIER = 2.0;
 
-    // 관심 코인 관련 필드
+    /** 거래량 패널 높이 비율 (차트 전체 대비) */
+    private static final double VOLUME_PANEL_RATIO = 0.18;
+
+    // ── 관심 코인 관련 필드 ──────────────────────────────
     private String currentUserId;
     private Runnable watchlistListener;
     private JButton btnWatchlist;
     private DAO.WatchListDAO watchListDAO = new DAO.WatchListDAO();
-    
+
     // ── 타임프레임별 페이지 캐시 ─────────────────────────
-    /**
-     * 타임프레임 하나의 캐시 상태를 담는 내부 클래스.
-     * TF_4H는 TF_1H 데이터를 캐시하므로 cacheMap 키는 TF_1H로 저장.
-     */
     private static class PageCache {
-        List<CandleDTO> candles = new ArrayList<>(); // ASC 정렬
+        List<CandleDTO> candles = new ArrayList<>();
         long fromMs = -1;
         long toMs   = -1;
         volatile boolean prefetchInProgress = false;
@@ -108,10 +96,6 @@ public class CandleChartPanel extends JPanel {
         boolean isInitialized() { return fromMs >= 0 && toMs >= 0; }
     }
 
-    /**
-     * DB 조회 unit → PageCache 맵.
-     * TF_4H 버튼은 TF_1H 캐시를 공유합니다.
-     */
     private final Map<Integer, PageCache> cacheMap = new HashMap<>();
 
     // ── 차트 컴포넌트 ────────────────────────────────────
@@ -123,28 +107,32 @@ public class CandleChartPanel extends JPanel {
     private JLabel lblChartTitle;
 
     // ── 초기 상태 ────────────────────────────────────────
-    private String currentMarket = "KRW-BTC";
-    private int currentTimeframe = TF_1M;
-    private Point lastMousePoint;
+    private String currentMarket   = "KRW-BTC";
+    private int    currentTimeframe = TF_1M;
+    private Point  lastMousePoint;
 
     // ── 백테스팅 상태 ─────────────────────────────────────
     private LocalDateTime backtestTargetTime = null;
 
     // ── 실시간 라이브 캔들 ────────────────────────────────
-    private CandleDTO liveCandle = null;
+    private CandleDTO     liveCandle            = null;
     private LocalDateTime liveCandleMinuteStart = null;
+
+    // ── Ghost 캔들 ───────────────────────────────────────
+    private final List<CandleDTO> ghostCandles  = new ArrayList<>();
+    private static final int MAX_GHOST_CANDLES  = 10;
 
     // ── 실시간 타이머 ────────────────────────────────────
     private Timer liveTimer;
     private static final int LIVE_RENDER_MS = 500;
-    private volatile double latestLivePrice = -1;
-    private volatile long latestLiveTimestamp = -1;
+    private volatile double latestLivePrice     = -1;
+    private volatile long   latestLiveTimestamp = -1;
 
     // ── 웹소켓 ───────────────────────────────────────────
     private UpbitWebSocket webSocketClient;
 
     // ── 현재가 박스 표시 ──────────────────────────────────
-    private double overlayPrice = Double.NaN;
+    private double  overlayPrice  = Double.NaN;
     private boolean overlayRising = true;
 
 
@@ -157,11 +145,10 @@ public class CandleChartPanel extends JPanel {
 
         initCacheMap();
 
-        // plot이 null인 상태에서 createDataset 호출 — fetchPagedCandles 내부에서 처리
         OHLCDataset dataset = createDataset(currentMarket, currentTimeframe, null);
         chart = ChartFactory.createCandlestickChart(null, "", "", dataset, false);
-        chart.setTitle(""); 
-        plot = (XYPlot) chart.getPlot(); // ← 여기서 plot 초기화
+        chart.setTitle("");
+        plot = (XYPlot) chart.getPlot();
 
         configureChartUI();
         setupChartPanel();
@@ -171,6 +158,7 @@ public class CandleChartPanel extends JPanel {
 
         updateXAxisRange(dataset);
         updateYAxisRange(dataset);
+        updateCandleWidth();
         drawCurrentPriceDashLine(dataset);
 
         startLiveTimer();
@@ -178,16 +166,15 @@ public class CandleChartPanel extends JPanel {
     }
 
     private void initCacheMap() {
-        // TF_4H는 TF_1H를 공유하므로 별도 엔트리 불필요
         for (int tf : new int[]{TF_1M, TF_30M, TF_1H, TF_1D, TF_1MON}) {
             cacheMap.put(tf, new PageCache());
         }
     }
-    
+
     public void setUserIdAndListener(String userId, Runnable listener) {
-        this.currentUserId = userId;
+        this.currentUserId    = userId;
         this.watchlistListener = listener;
-        updateWatchlistButtonState(); // 초기 렌더링 시 별 상태 동기화
+        updateWatchlistButtonState();
     }
 
 
@@ -207,7 +194,8 @@ public class CandleChartPanel extends JPanel {
         domainAxis.setAutoTickUnitSelection(true);
 
         CandlestickRenderer renderer = new CandlestickRenderer();
-        renderer.setAutoWidthMethod(CandlestickRenderer.WIDTHMETHOD_SMALLEST);
+        renderer.setAutoWidthMethod(CandlestickRenderer.WIDTHMETHOD_AVERAGE);
+        renderer.setAutoWidthFactor(0.7);
         renderer.setAutoWidthGap(0.0);
         renderer.setDrawVolume(false);
         renderer.setUpPaint(Color.RED);
@@ -254,112 +242,481 @@ public class CandleChartPanel extends JPanel {
                 );
 
                 updateYAxisRange((OHLCDataset) plot.getDataset());
-
-                // ★ 드래그 시 현재 타임프레임 캐시 경계 근접 여부 확인
                 checkAndPrefetchIfNeeded(currentTimeframe);
-
                 chartPanel.repaint();
             }
         });
     }
+
+    // ════════════════════════════════════════════════════
+    //  상단 영역 (타임프레임 버튼 + 보조지표 드롭다운)
+    // ════════════════════════════════════════════════════
 
     private void createTopArea() {
         JPanel topContainer = new JPanel();
         topContainer.setLayout(new BoxLayout(topContainer, BoxLayout.Y_AXIS));
         topContainer.setBackground(Color.WHITE);
 
-        // 타임프레임(분봉) 버튼
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        buttonPanel.setBackground(Color.WHITE);
+        // ── 1행: 타임프레임 버튼(왼쪽) + 보조지표 드롭다운(오른쪽) ──
+        JPanel buttonRow = new JPanel(new BorderLayout());
+        buttonRow.setBackground(Color.WHITE);
+
+        // 타임프레임 버튼 패널
+        JPanel tfPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 4));
+        tfPanel.setBackground(Color.WHITE);
 
         String[] labels     = {"1분",  "30분",  "1시간", "4시간", "1일",   "1달"};
         int[]    timeframes = {TF_1M, TF_30M, TF_1H,  TF_4H,  TF_1D, TF_1MON};
 
         for (int i = 0; i < labels.length; i++) {
             final int timeframe = timeframes[i];
-
             JButton button = new JButton(labels[i]);
             button.setBackground(Color.LIGHT_GRAY);
             button.setFocusPainted(false);
-
             if (timeframe == currentTimeframe) {
                 button.setBackground(Color.ORANGE);
                 selectedButton = button;
             }
-
             button.addActionListener(e -> {
                 if (selectedButton != null) selectedButton.setBackground(Color.LIGHT_GRAY);
                 button.setBackground(Color.ORANGE);
                 selectedButton = button;
                 currentTimeframe = timeframe;
-
                 resetCache(dbUnitOf(timeframe));
                 refreshChart();
             });
-
-            buttonPanel.add(button);
+            tfPanel.add(button);
         }
-        
-     // 코인 이름 + 관심코인(★)
+
+        // 보조지표 드롭다운 패널
+        JPanel indicatorPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 4));
+        indicatorPanel.setBackground(Color.WHITE);
+        indicatorPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 90));
+        indicatorPanel.add(createIndicatorDropdown());
+
+        buttonRow.add(tfPanel,        BorderLayout.WEST);
+        buttonRow.add(indicatorPanel, BorderLayout.EAST);
+
+        // ── 2행: 코인 이름 + 관심코인 ──
         JPanel titlePanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
         titlePanel.setBackground(Color.WHITE);
 
         lblChartTitle = new JLabel(getCurrentMarketSymbol());
-        lblChartTitle.setFont(new Font("맑은 고딕", Font.BOLD, 20)); // 글씨 크기 큼직하게!
+        lblChartTitle.setFont(new Font("맑은 고딕", Font.BOLD, 20));
 
         btnWatchlist = new JButton("☆");
         btnWatchlist.setFont(new Font("맑은 고딕", Font.BOLD, 22));
-        btnWatchlist.setForeground(new Color(241, 196, 15)); // 예쁜 노란색
+        btnWatchlist.setForeground(new Color(241, 196, 15));
         btnWatchlist.setBackground(Color.WHITE);
         btnWatchlist.setFocusPainted(false);
         btnWatchlist.setBorderPainted(false);
         btnWatchlist.setContentAreaFilled(false);
         btnWatchlist.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btnWatchlist.setMargin(new Insets(0, 0, 0, 0)); // 여백을 없애서 글씨 옆에 착 붙게
-
+        btnWatchlist.setMargin(new Insets(0, 0, 0, 0));
         btnWatchlist.addActionListener(e -> toggleWatchlist());
 
         titlePanel.add(lblChartTitle);
         titlePanel.add(btnWatchlist);
 
-        // 1층과 2층을 합쳐서 북쪽에 부착!
-        topContainer.add(buttonPanel);
+        topContainer.add(buttonRow);
         topContainer.add(titlePanel);
         add(topContainer, BorderLayout.NORTH);
     }
 
+    /**
+     * 보조지표 드롭다운 버튼을 생성합니다.
+     * 버튼 클릭 시 팝업 메뉴가 나타나며 각 항목을 체크박스로 ON/OFF합니다.
+     */
+    private JButton createIndicatorDropdown() {
+        JButton btn = new JButton("보조지표");
+        btn.setFocusPainted(false);
+        btn.setBackground(Color.LIGHT_GRAY);
+        btn.setForeground(Color.BLACK);
+        btn.setFont(new Font("맑은 고딕", Font.BOLD, 12));
+        btn.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
+        //btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+
+        JPopupMenu popup = buildIndicatorPopup(btn);
+
+        btn.addActionListener(e -> {
+            popup.show(btn, 0, btn.getHeight());
+        });
+
+        return btn;
+    }
+
+    /**
+     * 보조지표 팝업 메뉴 구성.
+     * ─ MA5 / MA20 / MA60 / 볼린저 밴드 / 거래량
+     */
+    private JPopupMenu buildIndicatorPopup(JButton parentBtn) {
+        JPopupMenu popup = new JPopupMenu();
+        popup.setBackground(Color.WHITE);
+        popup.setBorder(BorderFactory.createLineBorder(new Color(200, 200, 200)));
+
+        // ── 섹션 레이블 ──
+        JLabel lblMA = new JLabel("  이동평균선");
+        lblMA.setFont(new Font("맑은 고딕", Font.BOLD, 11));
+        lblMA.setForeground(new Color(100, 100, 100));
+        lblMA.setBorder(BorderFactory.createEmptyBorder(6, 4, 2, 4));
+        popup.add(lblMA);
+
+        // MA5
+        JCheckBoxMenuItem itemMA5 = new JCheckBoxMenuItem("MA 5", showMA5);
+        styleMenuItem(itemMA5, new Color(255, 165, 0)); // 주황
+        itemMA5.addActionListener(e -> {
+            showMA5 = itemMA5.isSelected();
+            chartPanel.repaint();
+        });
+        popup.add(itemMA5);
+
+        // MA20
+        JCheckBoxMenuItem itemMA20 = new JCheckBoxMenuItem("MA 20", showMA20);
+        styleMenuItem(itemMA20, new Color(30, 144, 255)); // 파랑
+        itemMA20.addActionListener(e -> {
+            showMA20 = itemMA20.isSelected();
+            chartPanel.repaint();
+        });
+        popup.add(itemMA20);
+
+        // MA60
+        JCheckBoxMenuItem itemMA60 = new JCheckBoxMenuItem("MA 60", showMA60);
+        styleMenuItem(itemMA60, new Color(148, 0, 211)); // 보라
+        itemMA60.addActionListener(e -> {
+            showMA60 = itemMA60.isSelected();
+            chartPanel.repaint();
+        });
+        popup.add(itemMA60);
+
+        popup.addSeparator();
+
+        // ── 볼린저 밴드 ──
+        JLabel lblBB = new JLabel("  볼린저 밴드");
+        lblBB.setFont(new Font("맑은 고딕", Font.BOLD, 11));
+        lblBB.setForeground(new Color(100, 100, 100));
+        lblBB.setBorder(BorderFactory.createEmptyBorder(4, 4, 2, 4));
+        popup.add(lblBB);
+
+        JCheckBoxMenuItem itemBB = new JCheckBoxMenuItem("Bollinger Bands (20,2)", showBollinger);
+        styleMenuItem(itemBB, new Color(34, 139, 34)); // 초록
+        itemBB.addActionListener(e -> {
+            showBollinger = itemBB.isSelected();
+            chartPanel.repaint();
+        });
+        popup.add(itemBB);
+
+        popup.addSeparator();
+
+        // ── 거래량 ──
+        JLabel lblVol = new JLabel("  거래량");
+        lblVol.setFont(new Font("맑은 고딕", Font.BOLD, 11));
+        lblVol.setForeground(new Color(100, 100, 100));
+        lblVol.setBorder(BorderFactory.createEmptyBorder(4, 4, 2, 4));
+        popup.add(lblVol);
+
+        JCheckBoxMenuItem itemVol = new JCheckBoxMenuItem("Volume", showVolume);
+        styleMenuItem(itemVol, new Color(128, 128, 128)); // 회색
+        itemVol.addActionListener(e -> {
+            showVolume = itemVol.isSelected();
+            chartPanel.repaint();
+        });
+        popup.add(itemVol);
+
+        return popup;
+    }
+
+    /** 메뉴 아이템 공통 스타일 */
+    private void styleMenuItem(JCheckBoxMenuItem item, Color accentColor) {
+        item.setFont(new Font("맑은 고딕", Font.PLAIN, 12));
+        item.setBackground(Color.WHITE);
+        item.setForeground(Color.DARK_GRAY);
+        item.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
+        // 체크 시 글씨색을 강조색으로
+        item.addChangeListener(e -> {
+            item.setForeground(item.isSelected() ? accentColor : Color.DARK_GRAY);
+        });
+    }
+
 
     // ════════════════════════════════════════════════════
-    //  ★ 뷰포트 페이징 — 전 타임프레임 공통
+    //  ★ 보조지표 계산
     // ════════════════════════════════════════════════════
 
     /**
-     * TF_4H는 DB에서 TF_1H로 조회하므로 캐시 키(DB unit)를 TF_1H로 변환.
-     * 나머지 타임프레임은 그대로.
+     * 단순 이동평균 (SMA).
+     * 데이터가 period보다 적은 앞부분은 Double.NaN으로 채웁니다.
+     *
+     * @param closes 종가 배열 (시간 오름차순)
+     * @param period 기간
+     * @return 동일 길이의 MA 배열
      */
-    private int dbUnitOf(int timeframe) {
-        return (timeframe == TF_4H) ? TF_1H : timeframe;
+    private double[] calcMA(double[] closes, int period) {
+        double[] ma = new double[closes.length];
+        for (int i = 0; i < closes.length; i++) {
+            if (i < period - 1) {
+                ma[i] = Double.NaN;
+            } else {
+                double sum = 0;
+                for (int j = i - period + 1; j <= i; j++) sum += closes[j];
+                ma[i] = sum / period;
+            }
+        }
+        return ma;
     }
 
     /**
-     * 리샘플링 비율: DB 조회 캔들 몇 개가 화면 캔들 1개로 합쳐지는지.
+     * 볼린저 밴드 계산.
      *
-     * TF_4H → 1H 데이터 4개 → 4H 캔들 1개  → 비율 4
-     * 나머지 → 1:1                           → 비율 1
-     *
-     * bufferMs에 이 비율을 곱해서 리샘플링 후에도
-     * MAX_VISIBLE_CANDLES 개를 충분히 채울 수 있게 보정합니다.
+     * @param closes 종가 배열
+     * @param period 이동평균 기간 (기본 20)
+     * @param mult   표준편차 배수 (기본 2.0)
+     * @return [0]=상단밴드, [1]=중간(MA), [2]=하단밴드
      */
-    private int resampleRatioOf(int timeframe) {
-        return (timeframe == TF_4H) ? (TF_4H / TF_1H) : 1;
+    private double[][] calcBollingerBands(double[] closes, int period, double mult) {
+        int n = closes.length;
+        double[] upper  = new double[n];
+        double[] middle = new double[n];
+        double[] lower  = new double[n];
+
+        for (int i = 0; i < n; i++) {
+            if (i < period - 1) {
+                upper[i] = middle[i] = lower[i] = Double.NaN;
+            } else {
+                double sum = 0;
+                for (int j = i - period + 1; j <= i; j++) sum += closes[j];
+                double avg = sum / period;
+                double variance = 0;
+                for (int j = i - period + 1; j <= i; j++) {
+                    double diff = closes[j] - avg;
+                    variance += diff * diff;
+                }
+                double stdDev = Math.sqrt(variance / period);
+                middle[i] = avg;
+                upper[i]  = avg + mult * stdDev;
+                lower[i]  = avg - mult * stdDev;
+            }
+        }
+        return new double[][]{upper, middle, lower};
     }
 
-    /** 전체 캐시 초기화 (종목/모드 변경 시) */
-    private void resetAllCaches() {
-        for (PageCache c : cacheMap.values()) c.reset();
+
+    // ════════════════════════════════════════════════════
+    //  ★ 보조지표 렌더링 (OverlayChartPanel 내부에서 호출)
+    // ════════════════════════════════════════════════════
+
+    /**
+     * 현재 dataset의 종가/거래량 배열을 추출하고
+     * 활성화된 보조지표를 Graphics2D 위에 그립니다.
+     */
+    private void drawIndicators(Graphics2D g2, Rectangle2D plotArea) {
+        OHLCDataset dataset = (OHLCDataset) plot.getDataset();
+        if (dataset == null || dataset.getItemCount(0) <= 0) return;
+
+        int n = dataset.getItemCount(0);
+
+        // ── X/Y 매핑용 축 ──
+        DateAxis   xAxis = (DateAxis)   plot.getDomainAxis();
+        NumberAxis yAxis = (NumberAxis) plot.getRangeAxis();
+
+        // ── 종가 배열 추출 ──
+        double[] closes  = new double[n];
+        double[] volumes = new double[n];
+        double[] xMs     = new double[n];
+        for (int i = 0; i < n; i++) {
+            closes[i]  = dataset.getCloseValue(0, i);
+            volumes[i] = dataset.getVolumeValue(0, i);
+            xMs[i]     = dataset.getXValue(0, i);
+        }
+
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+        // ── 볼린저 밴드 (MA선 아래에 먼저 그려 MA가 위에 올라오게) ──
+        if (showBollinger) {
+            drawBollingerBands(g2, plotArea, xAxis, yAxis, xMs, closes);
+        }
+
+        // ── 이동평균선 ──
+        if (showMA5)  drawMALine(g2, plotArea, xAxis, yAxis, xMs, calcMA(closes, 5),
+                                  new Color(255, 165, 0), "MA5");
+        if (showMA20) drawMALine(g2, plotArea, xAxis, yAxis, xMs, calcMA(closes, 20),
+                                  new Color(30, 144, 255), "MA20");
+        if (showMA60) drawMALine(g2, plotArea, xAxis, yAxis, xMs, calcMA(closes, 60),
+                                  new Color(148, 0, 211), "MA60");
+
+        // ── 거래량 (캔들 차트 하단 18% 영역에 오버레이) ──
+        if (showVolume) {
+            drawVolumeOverlay(g2, plotArea, xAxis, dataset, xMs, volumes);
+        }
     }
-    
-    
+
+    /**
+     * 단일 MA 선 + 범례 레이블 렌더링.
+     */
+    private void drawMALine(Graphics2D g2, Rectangle2D plotArea,
+                             DateAxis xAxis, NumberAxis yAxis,
+                             double[] xMs, double[] ma,
+                             Color color, String label) {
+        g2.setColor(color);
+        g2.setStroke(new BasicStroke(1.5f));
+
+        int prevX = -1, prevY = -1;
+        for (int i = 0; i < ma.length; i++) {
+            if (Double.isNaN(ma[i])) { prevX = prevY = -1; continue; }
+
+            int px = (int) xAxis.valueToJava2D(xMs[i], plotArea, plot.getDomainAxisEdge());
+            int py = (int) yAxis.valueToJava2D(ma[i],  plotArea, plot.getRangeAxisEdge());
+
+            if (prevX >= 0) {
+                g2.drawLine(prevX, prevY, px, py);
+            }
+            prevX = px;
+            prevY = py;
+        }
+
+        // 마지막 점 옆에 레이블
+        if (prevX >= 0) {
+            g2.setFont(new Font("Nanum Gothic", Font.BOLD, 10));
+            g2.drawString(label, prevX + 3, prevY - 3);
+        }
+    }
+
+    /**
+     * 볼린저 밴드 (상단/중간/하단 + 반투명 채움) 렌더링.
+     */
+    private void drawBollingerBands(Graphics2D g2, Rectangle2D plotArea,
+                                     DateAxis xAxis, NumberAxis yAxis,
+                                     double[] xMs, double[] closes) {
+        double[][] bb = calcBollingerBands(closes, BB_PERIOD, BB_MULTIPLIER);
+        double[] upper  = bb[0];
+        double[] middle = bb[1];
+        double[] lower  = bb[2];
+
+        Color bandColor = new Color(34, 139, 34);
+
+        // ── 밴드 내부 채움 (반투명) ──
+        java.awt.geom.GeneralPath fillPath = new java.awt.geom.GeneralPath();
+        boolean started = false;
+        for (int i = 0; i < upper.length; i++) {
+            if (Double.isNaN(upper[i])) continue;
+            int px = (int) xAxis.valueToJava2D(xMs[i],    plotArea, plot.getDomainAxisEdge());
+            int py = (int) yAxis.valueToJava2D(upper[i],  plotArea, plot.getRangeAxisEdge());
+            if (!started) { fillPath.moveTo(px, py); started = true; }
+            else           fillPath.lineTo(px, py);
+        }
+        for (int i = lower.length - 1; i >= 0; i--) {
+            if (Double.isNaN(lower[i])) continue;
+            int px = (int) xAxis.valueToJava2D(xMs[i],   plotArea, plot.getDomainAxisEdge());
+            int py = (int) yAxis.valueToJava2D(lower[i], plotArea, plot.getRangeAxisEdge());
+            fillPath.lineTo(px, py);
+        }
+        fillPath.closePath();
+        g2.setColor(new Color(34, 139, 34, 25)); // 매우 연한 초록
+        g2.fill(fillPath);
+
+        // ── 상단/하단 밴드 선 ──
+        g2.setColor(new Color(bandColor.getRed(), bandColor.getGreen(), bandColor.getBlue(), 180));
+        g2.setStroke(new BasicStroke(1.0f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND,
+                1.0f, new float[]{4f, 2f}, 0f));
+        drawSimpleLine(g2, plotArea, xAxis, yAxis, xMs, upper);
+        drawSimpleLine(g2, plotArea, xAxis, yAxis, xMs, lower);
+
+        // ── 중간선 (실선) ──
+        g2.setColor(new Color(bandColor.getRed(), bandColor.getGreen(), bandColor.getBlue(), 210));
+        g2.setStroke(new BasicStroke(1.2f));
+        drawSimpleLine(g2, plotArea, xAxis, yAxis, xMs, middle);
+
+        // ── 레이블 ──
+        int lastValid = -1;
+        for (int i = upper.length - 1; i >= 0; i--) {
+            if (!Double.isNaN(upper[i])) { lastValid = i; break; }
+        }
+        if (lastValid >= 0) {
+            int px = (int) xAxis.valueToJava2D(xMs[lastValid],    plotArea, plot.getDomainAxisEdge());
+            int py = (int) yAxis.valueToJava2D(upper[lastValid],   plotArea, plot.getRangeAxisEdge());
+            g2.setColor(bandColor);
+            g2.setFont(new Font("Nanum Gothic", Font.BOLD, 10));
+            g2.drawString("BB", px + 3, py - 3);
+        }
+    }
+
+    /** NaN 건너뛰며 연결선만 그리는 헬퍼 */
+    private void drawSimpleLine(Graphics2D g2, Rectangle2D plotArea,
+                                 DateAxis xAxis, NumberAxis yAxis,
+                                 double[] xMs, double[] values) {
+        int prevX = -1, prevY = -1;
+        for (int i = 0; i < values.length; i++) {
+            if (Double.isNaN(values[i])) { prevX = prevY = -1; continue; }
+            int px = (int) xAxis.valueToJava2D(xMs[i],     plotArea, plot.getDomainAxisEdge());
+            int py = (int) yAxis.valueToJava2D(values[i],  plotArea, plot.getRangeAxisEdge());
+            if (prevX >= 0) g2.drawLine(prevX, prevY, px, py);
+            prevX = px;
+            prevY = py;
+        }
+    }
+
+    /**
+     * 거래량 오버레이 — 차트 하단 VOLUME_PANEL_RATIO 영역에 막대로 표시.
+     * 양봉(close≥open)은 빨간색, 음봉은 파란색 (투명도 적용).
+     */
+    private void drawVolumeOverlay(Graphics2D g2, Rectangle2D plotArea,
+                                    DateAxis xAxis, OHLCDataset dataset,
+                                    double[] xMs, double[] volumes) {
+        if (volumes.length == 0) return;
+
+        // 거래량 패널 영역 계산 (plotArea 하단 18%)
+        double panelH  = plotArea.getHeight() * VOLUME_PANEL_RATIO;
+        double panelY  = plotArea.getMaxY() - panelH;
+        double panelBottom = plotArea.getMaxY();
+
+        // 최대 거래량 (0 제외)
+        double maxVol = 0;
+        for (double v : volumes) if (v > maxVol) maxVol = v;
+        if (maxVol <= 0) return;
+
+        // 캔들 1개 폭(ms) 기준 바 폭 계산
+        double candleMs = getCandleIntervalMs(currentTimeframe);
+        double barWidthMs = candleMs * 0.6;
+        double msPerPx = plotArea.getWidth() /
+                ((DateAxis) plot.getDomainAxis()).getRange().getLength();
+        int barWidthPx = Math.max(1, (int)(barWidthMs * msPerPx));
+
+        // 구분선
+        g2.setColor(new Color(180, 180, 180, 100));
+        g2.setStroke(new BasicStroke(0.5f));
+        g2.drawLine((int) plotArea.getMinX(), (int) panelY,
+                    (int) plotArea.getMaxX(), (int) panelY);
+
+        // 막대 그리기
+        int n = dataset.getItemCount(0);
+        for (int i = 0; i < n; i++) {
+            if (volumes[i] <= 0) continue;
+
+            double open  = dataset.getOpenValue(0, i);
+            double close = dataset.getCloseValue(0, i);
+            boolean rising = (close >= open);
+
+            int barH = (int)(panelH * (volumes[i] / maxVol));
+            int px   = (int) xAxis.valueToJava2D(xMs[i], plotArea, plot.getDomainAxisEdge());
+            int bx   = px - barWidthPx / 2;
+            int by   = (int)(panelBottom - barH);
+
+            g2.setColor(rising
+                    ? new Color(220, 60, 60, 160)
+                    : new Color(60, 80, 220, 160));
+            g2.fillRect(bx, by, barWidthPx, barH);
+        }
+
+        // "VOL" 레이블
+        g2.setColor(new Color(120, 120, 120));
+        g2.setFont(new Font("Nanum Gothic", Font.BOLD, 10));
+        g2.drawString("VOL", (int) plotArea.getMinX() + 4, (int) panelY - 3);
+    }
+
+
+    // ════════════════════════════════════════════════════
+    //  관심코인
+    // ════════════════════════════════════════════════════
+
     private void updateWatchlistButtonState() {
         if (currentUserId == null || btnWatchlist == null) return;
         boolean isWatching = watchListDAO.isWatchlist(currentUserId, currentMarket);
@@ -369,7 +726,6 @@ public class CandleChartPanel extends JPanel {
     private void toggleWatchlist() {
         if (currentUserId == null) return;
         boolean isWatching = watchListDAO.isWatchlist(currentUserId, currentMarket);
-        
         if (isWatching) {
             watchListDAO.removeWatchlist(currentUserId, currentMarket);
             btnWatchlist.setText("☆");
@@ -377,40 +733,36 @@ public class CandleChartPanel extends JPanel {
             watchListDAO.addWatchlist(currentUserId, currentMarket);
             btnWatchlist.setText("★");
         }
-
-        // MainFrame의 HistoryPanel 새로고침 트리거
-        if (watchlistListener != null) {
-            watchlistListener.run();
-        }
+        if (watchlistListener != null) watchlistListener.run();
     }
 
-    /** 특정 DB unit 캐시만 초기화 */
+
+    // ════════════════════════════════════════════════════
+    //  ★ 뷰포트 페이징 — 전 타임프레임 공통
+    // ════════════════════════════════════════════════════
+
+    private int dbUnitOf(int timeframe) {
+        return (timeframe == TF_4H) ? TF_1H : timeframe;
+    }
+
+    private int resampleRatioOf(int timeframe) {
+        return (timeframe == TF_4H) ? (TF_4H / TF_1H) : 1;
+    }
+
+    private void resetAllCaches() {
+        for (PageCache c : cacheMap.values()) c.reset();
+    }
+
     private void resetCache(int dbUnit) {
         PageCache c = cacheMap.get(dbUnit);
         if (c != null) c.reset();
     }
 
-    /**
-     * 뷰포트 기반 캔들 페이징 조회 (모든 타임프레임 공통 진입점).
-     *
-     * ── 분기 로직 ─────────────────────────────────────────────────
-     *  1) plot==null(생성자 첫 호출) or 캐시 미초기화
-     *     → targetTime 또는 현재 시각 기준 PAGE_BUFFER*2 구간 최초 로드
-     *  2) 뷰포트가 캐시 범위 안 → 캐시 반환 (DB 조회 없음)
-     *  3) 뷰포트가 캐시 밖으로 점프 → 뷰포트 중심 기준 동기 재조회
-     * ──────────────────────────────────────────────────────────────
-     *
-     * @param dbUnit     실제 DB 조회 unit (TF_4H 시 TF_1H 전달)
-     * @param targetTime 백테스팅 기준시각 (실시간이면 null)
-     */
     private List<CandleDTO> fetchPagedCandles(String market, int dbUnit,
                                                LocalDateTime targetTime) {
         PageCache cache   = cacheMap.get(dbUnit);
-        // ★ 리샘플링 비율 반영: TF_4H는 1H 데이터를 4개씩 합치므로
-        //   버퍼를 4배 확보해야 리샘플링 후에도 MAX_VISIBLE_CANDLES 개를 채울 수 있음
         long bufferMs     = (long)(PAGE_BUFFER * resampleRatioOf(currentTimeframe) * getCandleIntervalMs(dbUnit));
 
-        // ── 첫 로드 ──
         if (plot == null || !cache.isInitialized()) {
             long fetchTo   = (targetTime != null)
                     ? java.sql.Timestamp.valueOf(targetTime).getTime()
@@ -423,22 +775,16 @@ public class CandleChartPanel extends JPanel {
         double axisLower = axis.getRange().getLowerBound();
         double axisUpper = axis.getRange().getUpperBound();
 
-        // ── 뷰포트 점프 → 동기 재조회 ──
         if (axisUpper < cache.fromMs || axisLower > cache.toMs) {
             long center    = (long)((axisLower + axisUpper) / 2);
             long fetchFrom = center - bufferMs;
             long fetchTo   = center + bufferMs;
-            System.out.printf("[Paging] unit=%d 점프 → 동기 재조회%n", dbUnit);
             return doFetchAndCache(cache, market, dbUnit, fetchFrom, fetchTo, targetTime);
         }
 
-        // ── 캐시 적중 ──
         return cache.candles;
     }
 
-    /**
-     * DB 범위 조회 후 캐시 갱신.
-     */
     private List<CandleDTO> doFetchAndCache(PageCache cache, String market, int dbUnit,
                                              long fetchFrom, long fetchTo,
                                              LocalDateTime targetTime) {
@@ -453,18 +799,12 @@ public class CandleChartPanel extends JPanel {
             result = candleDAO.getCandlesInRange(market, dbUnit, from, to);
         }
 
-        // getCandlesInRange는 ASC 반환 보장
         cache.candles = result;
         cache.fromMs  = fetchFrom;
         cache.toMs    = fetchTo;
-        System.out.printf("[Paging] unit=%d 조회: %s ~ %s → %d개%n", dbUnit, from, to, result.size());
         return result;
     }
 
-    /**
-     * 드래그/줌 후 캐시 경계 PREFETCH_THRESHOLD 이내 접근 시
-     * 백그라운드에서 새 범위를 미리 조회합니다.
-     */
     private void checkAndPrefetchIfNeeded(int timeframe) {
         int dbUnit      = dbUnitOf(timeframe);
         PageCache cache = cacheMap.get(dbUnit);
@@ -482,7 +822,6 @@ public class CandleChartPanel extends JPanel {
         cache.prefetchInProgress = true;
 
         long center   = (long)((lower + upper) / 2);
-        // ★ 리샘플링 비율 반영: TF_4H는 4배 버퍼 필요
         long bufferMs = (long)(PAGE_BUFFER * resampleRatioOf(timeframe) * getCandleIntervalMs(dbUnit));
         long newFrom  = center - bufferMs;
         long newTo    = center + bufferMs;
@@ -496,14 +835,9 @@ public class CandleChartPanel extends JPanel {
             LocalDateTime from = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(newFrom), kst);
             LocalDateTime to   = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(newTo),   kst);
 
-            List<CandleDTO> fresh;
-            if (tgt != null) {
-                fresh = candleDAO.getCandlesInRangeHistorical(mkt, dbUnit, from, to, tgt);
-            } else {
-                fresh = candleDAO.getCandlesInRange(mkt, dbUnit, from, to);
-            }
-            System.out.printf("[Paging] unit=%d pre-fetch: %s ~ %s → %d개%n",
-                    dbUnit, from, to, fresh.size());
+            List<CandleDTO> fresh = (tgt != null)
+                    ? candleDAO.getCandlesInRangeHistorical(mkt, dbUnit, from, to, tgt)
+                    : candleDAO.getCandlesInRange(mkt, dbUnit, from, to);
 
             SwingUtilities.invokeLater(() -> {
                 cache.candles = fresh;
@@ -511,35 +845,29 @@ public class CandleChartPanel extends JPanel {
                 cache.toMs    = newTo;
                 cache.prefetchInProgress = false;
 
-                // 현재 보고 있는 타임프레임일 때만 dataset 갱신
                 if (currentTimeframe == tf) {
                     OHLCDataset ds = assembleDataset(mkt, tf, fresh, tgt);
                     plot.setDataset(ds);
                     updateYAxisRange(ds);
+                    updateCandleWidth();
                     chartPanel.repaint();
                 }
             });
         }, "Prefetch-u" + dbUnit).start();
     }
 
-    /**
-     * pre-fetch 완료 후 타임프레임에 맞게 dataset 조립.
-     * (4H 리샘플링, liveCandle 병합 포함)
-     */
     private OHLCDataset assembleDataset(String market, int timeframe,
                                          List<CandleDTO> raw, LocalDateTime targetTime) {
+        purgeGhostsCoveredByDB(raw);
         List<CandleDTO> processed = applyResample(timeframe, raw);
 
         if (targetTime == null && liveCandle != null) {
             return mergeWithLiveCandle(market, timeframe, new ArrayList<>(processed));
         }
+        if (targetTime == null) mergeGhostCandles(processed);
         return processed.isEmpty() ? emptyDataset(market) : buildDataset(market, processed);
     }
 
-    /**
-     * raw 리스트에 타임프레임별 리샘플링을 적용합니다.
-     * TF_4H: resample4H, TF_1MON: resampleByMonth, 나머지: 그대로.
-     */
     private List<CandleDTO> applyResample(int timeframe, List<CandleDTO> raw) {
         if (timeframe == TF_4H)   return resample4H(raw);
         if (timeframe == TF_1MON) return resampleByMonth(raw);
@@ -551,74 +879,54 @@ public class CandleChartPanel extends JPanel {
     //  통합 데이터셋 생성
     // ════════════════════════════════════════════════════
 
-    /**
-     * 실시간/백테스팅 모드에 따라 해당 타임프레임 캔들을 조회합니다.
-     *
-     * ── 조회 전략 ──────────────────────────────────────────────────
-     *  TF_4H  → TF_1H 페이징 후 4H 리샘플링
-     *  TF_1MON → TF_1MON 페이징 (없으면 TF_1D 페이징 후 월봉 리샘플링)
-     *  나머지 → 해당 unit 페이징 (없으면 TF_1M 페이징 후 리샘플링)
-     * ──────────────────────────────────────────────────────────────
-     */
     private OHLCDataset createDataset(String market, int timeframe, LocalDateTime targetTime) {
         int dbUnit = dbUnitOf(timeframe);
         List<CandleDTO> raw = fetchPagedCandles(market, dbUnit, targetTime);
 
-        if (raw.isEmpty()) {
-            // DB에 해당 unit 데이터 없음 → 폴백
-            return fallbackDataset(market, timeframe, targetTime);
+        purgeGhostsCoveredByDB(raw);
+
+        if (raw.isEmpty()) return fallbackDataset(market, timeframe, targetTime);
+
+        List<CandleDTO> processed = new ArrayList<>(applyResample(timeframe, raw));
+
+        if (targetTime == null) {
+            mergeGhostCandles(processed);
+            if (liveCandle != null) return mergeWithLiveCandle(market, timeframe, processed);
         }
 
-        return buildDataset(market, applyResample(timeframe, raw));
+        return buildDataset(market, processed);
     }
 
-    /**
-     * DB에 해당 unit 데이터가 없을 때의 폴백 처리.
-     *
-     * TF_1MON → TF_1D 페이징 후 월봉 리샘플링
-     * 나머지  → TF_1M 페이징 후 해당 TF 리샘플링
-     */
     private OHLCDataset fallbackDataset(String market, int timeframe, LocalDateTime targetTime) {
-        System.out.println("[CandleChart] unit=" + timeframe + " 데이터 없음 → 폴백");
-
         List<CandleDTO> base;
         if (timeframe == TF_1MON) {
-            // 일봉으로 월봉 리샘플링
             base = fetchPagedCandles(market, TF_1D, targetTime);
             if (!base.isEmpty()) return buildDataset(market, resampleByMonth(base));
-            // 일봉도 없으면 1분봉 폴백
             base = fetchPagedCandles(market, TF_1M, targetTime);
         } else {
             base = fetchPagedCandles(market, TF_1M, targetTime);
         }
-
         if (base.isEmpty()) return emptyDataset(market);
         return buildDataset(market, resampleByTimeframe(base, timeframe));
     }
 
-    /**
-     * 실시간 모드 전용: 캐시 재사용 + liveCandle 병합.
-     * 500ms 라이브 틱마다 호출. DB 재조회 없음.
-     */
     private OHLCDataset createDatasetWithLiveCandle(String market, int timeframe) {
         int dbUnit = dbUnitOf(timeframe);
         List<CandleDTO> raw = new ArrayList<>(cacheMap.get(dbUnit).candles);
+
+        purgeGhostsCoveredByDB(raw);
+
         List<CandleDTO> processed = applyResample(timeframe, raw);
 
         if (liveCandle == null) {
+            mergeGhostCandles(processed);
             return processed.isEmpty() ? emptyDataset(market) : buildDataset(market, processed);
         }
-        return mergeWithLiveCandle(market, timeframe, new ArrayList<>(processed));
+        List<CandleDTO> withGhost = new ArrayList<>(processed);
+        mergeGhostCandles(withGhost);
+        return mergeWithLiveCandle(market, timeframe, withGhost);
     }
 
-    /**
-     * liveCandle을 processed 리스트에 병합 후 dataset 반환.
-     *
-     * ── 병합 규칙 ──────────────────────────────────────────────────
-     *  TF_1M:    같은 분봉이면 대체, 아니면 추가
-     *  상위 TF:  같은 블록이면 종가/고/저 갱신, 새 블록이면 추가
-     * ──────────────────────────────────────────────────────────────
-     */
     private OHLCDataset mergeWithLiveCandle(String market, int timeframe,
                                              List<CandleDTO> processed) {
         if (processed.isEmpty()) {
@@ -631,9 +939,8 @@ public class CandleChartPanel extends JPanel {
         if (timeframe == TF_1M) {
             if (liveCandleMinuteStart != null) {
                 LocalDateTime lastMinute = last.getCandleDateTimeKst().truncatedTo(ChronoUnit.MINUTES);
-                if (lastMinute.equals(liveCandleMinuteStart)) {
+                if (lastMinute.equals(liveCandleMinuteStart))
                     processed.remove(processed.size() - 1);
-                }
             }
             processed.add(liveCandle);
         } else {
@@ -658,6 +965,45 @@ public class CandleChartPanel extends JPanel {
 
 
     // ════════════════════════════════════════════════════
+    //  Ghost 캔들 관리
+    // ════════════════════════════════════════════════════
+
+    private void addGhostCandle(CandleDTO candle) {
+        LocalDateTime newTime = candle.getCandleDateTimeKst().truncatedTo(ChronoUnit.MINUTES);
+        ghostCandles.removeIf(g ->
+            g.getCandleDateTimeKst().truncatedTo(ChronoUnit.MINUTES).equals(newTime));
+        ghostCandles.add(copyCandle(candle));
+        while (ghostCandles.size() > MAX_GHOST_CANDLES) ghostCandles.remove(0);
+    }
+
+    private void purgeGhostsCoveredByDB(List<CandleDTO> dbCandles) {
+        if (dbCandles.isEmpty() || ghostCandles.isEmpty()) return;
+        java.util.Set<LocalDateTime> dbTimes = new java.util.HashSet<>();
+        for (CandleDTO c : dbCandles)
+            dbTimes.add(c.getCandleDateTimeKst().truncatedTo(ChronoUnit.MINUTES));
+        ghostCandles.removeIf(g ->
+            dbTimes.contains(g.getCandleDateTimeKst().truncatedTo(ChronoUnit.MINUTES)));
+    }
+
+    private void mergeGhostCandles(List<CandleDTO> processed) {
+        if (ghostCandles.isEmpty() || currentTimeframe != TF_1M) return;
+
+        LocalDateTime liveMinute = liveCandleMinuteStart;
+
+        for (CandleDTO ghost : ghostCandles) {
+            LocalDateTime ghostMinute = ghost.getCandleDateTimeKst().truncatedTo(ChronoUnit.MINUTES);
+            if (liveMinute != null && ghostMinute.equals(liveMinute)) continue;
+
+            boolean exists = processed.stream().anyMatch(c ->
+                c.getCandleDateTimeKst().truncatedTo(ChronoUnit.MINUTES).equals(ghostMinute));
+            if (!exists) processed.add(copyCandle(ghost));
+        }
+
+        processed.sort((a, b) -> a.getCandleDateTimeKst().compareTo(b.getCandleDateTimeKst()));
+    }
+
+
+    // ════════════════════════════════════════════════════
     //  리샘플링
     // ════════════════════════════════════════════════════
 
@@ -668,9 +1014,9 @@ public class CandleChartPanel extends JPanel {
     }
 
     private List<CandleDTO> resampleFixedMinutes(List<CandleDTO> src, int blockMinutes) {
-        List<CandleDTO> result   = new ArrayList<>();
-        List<CandleDTO> group    = new ArrayList<>();
-        String          groupKey = null;
+        List<CandleDTO> result = new ArrayList<>();
+        List<CandleDTO> group  = new ArrayList<>();
+        String groupKey = null;
 
         for (CandleDTO c : src) {
             String key = calcBlockKey(c.getCandleDateTimeKst(), blockMinutes);
@@ -686,9 +1032,9 @@ public class CandleChartPanel extends JPanel {
     }
 
     private List<CandleDTO> resampleByMonth(List<CandleDTO> src) {
-        List<CandleDTO> result   = new ArrayList<>();
-        List<CandleDTO> group    = new ArrayList<>();
-        String          groupKey = null;
+        List<CandleDTO> result = new ArrayList<>();
+        List<CandleDTO> group  = new ArrayList<>();
+        String groupKey = null;
 
         for (CandleDTO c : src) {
             String key = c.getCandleDateTimeKst().getYear() + "-"
@@ -820,9 +1166,8 @@ public class CandleChartPanel extends JPanel {
     }
 
     private String calcBlockKey(LocalDateTime kst, int timeframeMinutes) {
-        if (timeframeMinutes == TF_1MON) {
+        if (timeframeMinutes == TF_1MON)
             return kst.getYear() + "-" + String.format("%02d", kst.getMonthValue());
-        }
         long epochMinutes = ChronoUnit.MINUTES.between(LocalDateTime.of(1970, 1, 1, 9, 0), kst);
         return Long.toString(epochMinutes / timeframeMinutes);
     }
@@ -836,13 +1181,15 @@ public class CandleChartPanel extends JPanel {
         OHLCDataset dataset = createDataset(currentMarket, currentTimeframe, backtestTargetTime);
         plot.setDataset(dataset);
 
-        String title = backtestTargetTime != null 
-                ? getCurrentMarketSymbol() + " (Backtesting)" 
+        String title = backtestTargetTime != null
+                ? getCurrentMarketSymbol() + " (Backtesting)"
                 : getCurrentMarketSymbol();
         if (lblChartTitle != null) lblChartTitle.setText(title);
 
         updateXAxisRange(dataset);
         updateYAxisRange(dataset);
+        updateCandleWidth();
+        applyDateAxisFormat();
         drawCurrentPriceDashLine(dataset);
     }
 
@@ -866,11 +1213,9 @@ public class CandleChartPanel extends JPanel {
         double firstTick = dataset.getXValue(0, itemCount - displayCount);
         double candleIntervalMs = getCandleIntervalMs(currentTimeframe);
 
-        // 오른쪽 여백: 월봉은 1칸(다음 달 시작까지), 나머지는 라이브캔들 공간 4.5칸
-        double rightPad = (currentTimeframe == TF_1MON) ? 1.0 : 4.5;
         domainAxis.setRange(
-            firstTick  - candleIntervalMs * 0.5,
-            lastTick   + candleIntervalMs * rightPad
+            firstTick - candleIntervalMs * 0.5,
+            lastTick  + candleIntervalMs * 4.5
         );
     }
 
@@ -937,8 +1282,35 @@ public class CandleChartPanel extends JPanel {
 
 
     // ════════════════════════════════════════════════════
-    //  가격 포맷
+    //  캔들 폭 동적 조정
     // ════════════════════════════════════════════════════
+
+    private static final double CANDLE_WIDTH_RATIO = 0.7;
+
+    private void updateCandleWidth() {
+        if (plot == null) return;
+        CandlestickRenderer renderer = (CandlestickRenderer) plot.getRenderer();
+        if (renderer == null) return;
+
+        DateAxis domainAxis = (DateAxis) plot.getDomainAxis();
+        double rangeMs = domainAxis.getRange().getLength();
+        double candleIntervalMs = getCandleIntervalMs(currentTimeframe);
+        int visibleCandles = (int) Math.max(1, Math.round(rangeMs / candleIntervalMs));
+
+        Rectangle2D plotArea = chartPanel.getScreenDataArea();
+        if (plotArea == null || plotArea.getWidth() <= 0) {
+            renderer.setAutoWidthMethod(CandlestickRenderer.WIDTHMETHOD_AVERAGE);
+            renderer.setAutoWidthFactor(CANDLE_WIDTH_RATIO);
+            return;
+        }
+
+        double pixelsPerCandle = plotArea.getWidth() / visibleCandles;
+        double msPerPixel = rangeMs / plotArea.getWidth();
+        double widthMs = msPerPixel * pixelsPerCandle * CANDLE_WIDTH_RATIO;
+
+        renderer.setAutoWidthMethod(CandlestickRenderer.WIDTHMETHOD_SMALLEST);
+        renderer.setMaxCandleWidthInMilliseconds(widthMs);
+    }
 
     private DecimalFormat buildPriceFormat() {
         return new DecimalFormat("#,##0.##########");
@@ -950,7 +1322,7 @@ public class CandleChartPanel extends JPanel {
 
 
     // ════════════════════════════════════════════════════
-    //  가격 박스 오버레이
+    //  가격 박스 오버레이 + 보조지표 렌더링 (OverlayChartPanel)
     // ════════════════════════════════════════════════════
 
     private class OverlayChartPanel extends ChartPanel {
@@ -961,11 +1333,24 @@ public class CandleChartPanel extends JPanel {
         public void paintComponent(Graphics g) {
             super.paintComponent(g);
 
-            if (Double.isNaN(overlayPrice) || plot == null) return;
-
             Rectangle2D plotArea = getScreenDataArea();
-            if (plotArea == null) return;
+            if (plotArea == null || plot == null) return;
 
+            Graphics2D g2 = (Graphics2D) g.create();
+            try {
+                // ★ 보조지표 렌더링 (캔들 위에 오버레이)
+                drawIndicators(g2, plotArea);
+
+                // ★ 현재가 박스
+                if (!Double.isNaN(overlayPrice)) {
+                    drawPriceBox(g2, plotArea);
+                }
+            } finally {
+                g2.dispose();
+            }
+        }
+
+        private void drawPriceBox(Graphics2D g2, Rectangle2D plotArea) {
             NumberAxis yAxis = (NumberAxis) plot.getRangeAxis();
             double yPixel = yAxis.valueToJava2D(overlayPrice, plotArea, plot.getRangeAxisEdge());
 
@@ -975,9 +1360,7 @@ public class CandleChartPanel extends JPanel {
 
             if (boxY < 0 || boxY + boxH > getHeight()) return;
 
-            Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
             g2.setColor(overlayRising ? Color.RED : Color.BLUE);
             g2.fillRoundRect(boxX, boxY, boxW, boxH, 4, 4);
 
@@ -992,7 +1375,6 @@ public class CandleChartPanel extends JPanel {
                 g2.setColor(Color.WHITE);
             }
             g2.drawString(text, boxX + 5, boxY + (boxH + fm.getAscent() - fm.getDescent()) / 2);
-            g2.dispose();
         }
     }
 
@@ -1011,25 +1393,21 @@ public class CandleChartPanel extends JPanel {
         double length    = domainAxis.getRange().getLength();
         int visibleCount = (int) Math.round(length / candleMs);
 
-        if (wheelRotation > 0) {
-            // 줌 아웃 — MAX_VISIBLE_CANDLES 초과 불가
-            visibleCount = Math.min(MAX_VISIBLE_CANDLES, visibleCount + 5);
-        } else {
-            // 줌 인 — MIN_VISIBLE_CANDLES 미만 불가
-            visibleCount = Math.max(MIN_VISIBLE_CANDLES, visibleCount - 5);
-        }
+        if (wheelRotation > 0) visibleCount = Math.min(MAX_VISIBLE_CANDLES, visibleCount + 5);
+        else                   visibleCount = Math.max(MIN_VISIBLE_CANDLES, visibleCount - 5);
 
         double newLen = visibleCount * candleMs;
         domainAxis.setRange(upper - newLen, upper);
 
+        updateCandleWidth();
         updateYAxisRange(dataset);
-        checkAndPrefetchIfNeeded(currentTimeframe); // ★ 줌 후 pre-fetch 체크
+        checkAndPrefetchIfNeeded(currentTimeframe);
         chartPanel.repaint();
     }
 
 
     // ════════════════════════════════════════════════════
-    //  라이브 캔들 (실시간)
+    //  라이브 캔들
     // ════════════════════════════════════════════════════
 
     private void startLiveTimer() {
@@ -1057,6 +1435,7 @@ public class CandleChartPanel extends JPanel {
         LocalDateTime currentMinuteStart = serverNow.truncatedTo(ChronoUnit.MINUTES);
 
         if (liveCandleMinuteStart == null || !liveCandleMinuteStart.equals(currentMinuteStart)) {
+            if (liveCandle != null && liveCandleMinuteStart != null) addGhostCandle(liveCandle);
             liveCandleMinuteStart = currentMinuteStart;
             liveCandle = createNewLiveCandle(latestLivePrice, currentMinuteStart);
         }
@@ -1067,7 +1446,6 @@ public class CandleChartPanel extends JPanel {
         liveCandle.setLowPrice(Math.min(liveCandle.getLowPrice(), price));
 
         SwingUtilities.invokeLater(() -> {
-            // 캐시 재사용 — DB 재조회 없음
             OHLCDataset dataset = createDatasetWithLiveCandle(currentMarket, currentTimeframe);
             plot.setDataset(dataset);
             updateYAxisRange(dataset);
@@ -1123,25 +1501,21 @@ public class CandleChartPanel extends JPanel {
     //  공개 API
     // ════════════════════════════════════════════════════
 
-    /** 코인 종목 변경 */
     public void changeMarket(String coinSymbol) {
         this.currentMarket = "KRW-" + coinSymbol;
         liveCandle = null;
         liveCandleMinuteStart = null;
-        
-        // [해결 코드] 이전 코인의 실시간 가격 및 시간 데이터 초기화
-        this.latestLivePrice = -1;
+        ghostCandles.clear();
+        this.latestLivePrice     = -1;
         this.latestLiveTimestamp = -1;
-        //코인 바꿀 때 타이틀 즉시 변경
         if (lblChartTitle != null) lblChartTitle.setText(coinSymbol);
 
-        resetAllCaches(); 
+        resetAllCaches();
         refreshChart();
-        updateWatchlistButtonState(); 
+        updateWatchlistButtonState();
         if (backtestTargetTime == null) connectWebSocket();
     }
 
-    /** 백테스팅 모드로 전환 */
     public void loadHistoricalData(LocalDateTime targetTime) {
         stopLiveTimer();
         disconnectWebSocket();
@@ -1155,17 +1529,19 @@ public class CandleChartPanel extends JPanel {
             plot.setDataset(dataset);
             updateXAxisRange(dataset);
             updateYAxisRange(dataset);
+            updateCandleWidth();
             drawCurrentPriceDashLine(dataset);
             applyDateAxisFormat();
-            if (lblChartTitle != null) lblChartTitle.setText(getCurrentMarketSymbol() + " (Backtesting)");
+            if (lblChartTitle != null)
+                lblChartTitle.setText(getCurrentMarketSymbol() + " (Backtesting)");
         });
     }
 
-    /** 실시간 모드로 복귀 */
     public void resetToRealtimeMode() {
         this.backtestTargetTime = null;
         liveCandle = null;
         liveCandleMinuteStart = null;
+        ghostCandles.clear();
         resetAllCaches();
         startLiveTimer();
         connectWebSocket();
