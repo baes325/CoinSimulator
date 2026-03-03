@@ -529,7 +529,10 @@ public class CandleChartPanel extends JPanel {
         }
 
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
+        
+        Shape oldClip = g2.getClip();
+        g2.setClip(plotArea);
+        
         // ── 볼린저 밴드 (MA선 아래에 먼저 그려 MA가 위에 올라오게) ──
         if (showBollinger) {
             drawBollingerBands(g2, plotArea, xAxis, yAxis, xMs, closes);
@@ -547,6 +550,7 @@ public class CandleChartPanel extends JPanel {
         if (showVolume) {
             drawVolumeOverlay(g2, plotArea, xAxis, dataset, xMs, volumes);
         }
+        g2.setClip(oldClip);
     }
 
     /**
