@@ -120,6 +120,11 @@ String sql = "SELECT * FROM assets WHERE user_id = ? AND session_id = ? AND curr
         dto.setBalance(rs.getBigDecimal("balance"));
         dto.setLocked(rs.getBigDecimal("locked"));
         dto.setAvgBuyPrice(rs.getBigDecimal("avg_buy_price"));
+        
+        
+        
+        
+        
         return dto;
     }
 }

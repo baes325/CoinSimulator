@@ -350,6 +350,14 @@ public class ProfitLossDAO {
         dto.setRealizedPnl(rs.getBigDecimal("realized_pnl"));
         dto.setRoi(rs.getBigDecimal("roi"));
         dto.setExecutedAt(rs.getTimestamp("executed_at"));
+        
+        java.sql.Timestamp ts = rs.getTimestamp("executed_at");
+        if (ts != null) {
+            long correctedTime = ts.getTime() - (9 * 60 * 60 * 1000L); 
+            dto.setExecutedAt(new java.sql.Timestamp(correctedTime));
+        }
+        
+        
         return dto;
     }
 }
