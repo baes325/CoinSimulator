@@ -530,6 +530,7 @@ public class MainFrame extends JFrame {
         SwingUtilities.invokeLater(() -> {
             // 1. 주문 패널 새로고침 (이미 OrderPanel 내부에서 처리중이므로 패스하거나 필요시 추가)
             if (this.orderPanel != null) {
+            	this.orderPanel.refreshDBData();
                 // this.orderPanel.setSessionId(currentSessionId); 
             }
 

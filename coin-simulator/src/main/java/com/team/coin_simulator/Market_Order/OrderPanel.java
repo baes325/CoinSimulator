@@ -183,7 +183,7 @@ public class OrderPanel extends JPanel implements UpbitWebSocketDao.TickerListen
     }
     
     //DB와 동기화하는 메서드
-    private void refreshDBData() {
+    public void refreshDBData() {
         realBalance.clear();
         realLocked.clear();
         

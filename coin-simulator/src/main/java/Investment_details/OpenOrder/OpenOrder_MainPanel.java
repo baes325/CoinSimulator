@@ -91,6 +91,11 @@ public class OpenOrder_MainPanel extends JPanel {
                 JOptionPane.showMessageDialog(this,
                     "주문이 취소되었습니다.", "취소 완료", JOptionPane.INFORMATION_MESSAGE);
                 refreshData();
+             // MainFrame을 찾아 거래화면(주문정정란)까지 새로고침 지시
+                com.team.coin_simulator.MainFrame mainFrame = (com.team.coin_simulator.MainFrame) SwingUtilities.getWindowAncestor(this);
+                if (mainFrame != null) {
+                    mainFrame.refreshAllPanels();
+                }
             } else {
                 JOptionPane.showMessageDialog(this,
                     "주문 취소에 실패했습니다.", "오류", JOptionPane.ERROR_MESSAGE);
@@ -113,6 +118,11 @@ public class OpenOrder_MainPanel extends JPanel {
                     "취소할 주문이 없습니다.", "알림", JOptionPane.INFORMATION_MESSAGE);
             }
             refreshData();
+         // 일괄 취소 후에도 MainFrame을 찾아 거래화면(주문정정란) 새로고침 지시
+            com.team.coin_simulator.MainFrame mainFrame = (com.team.coin_simulator.MainFrame) SwingUtilities.getWindowAncestor(this);
+            if (mainFrame != null) {
+                mainFrame.refreshAllPanels();
+            }
         }
     }
 
