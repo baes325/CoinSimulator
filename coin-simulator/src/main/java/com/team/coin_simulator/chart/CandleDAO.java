@@ -8,10 +8,7 @@ import java.util.List;
 
 public class CandleDAO {
 
-    // ════════════════════════════════════════════════════
-    //  공통 매핑 헬퍼
-    // ════════════════════════════════════════════════════
-
+    /*공통 매핑 헬퍼*/
     private CandleDTO mapRow(ResultSet rs) throws SQLException {
         CandleDTO dto = new CandleDTO();
         dto.setMarket(rs.getString("market"));
@@ -28,13 +25,7 @@ public class CandleDAO {
         return dto;
     }
 
-    // ════════════════════════════════════════════════════
-    //  기존 메서드
-    // ════════════════════════════════════════════════════
-
-    /**
-     * 특정 종목의 캔들 데이터 조회 (최신순 LIMIT)
-     */
+    /*특정 종목의 캔들 데이터 조회 (최신순 LIMIT)*/
     public List<CandleDTO> getCandles(String market, int unit, int limit) {
         List<CandleDTO> list = new ArrayList<>();
         String sql = "SELECT * FROM market_candle WHERE market = ? AND unit = ? " +
@@ -58,9 +49,7 @@ public class CandleDAO {
         return list;
     }
 
-    /**
-     * 특정 시점(targetTime) 이전의 데이터를 가져오는 메서드 (백테스팅용)
-     */
+    /*특정 시점(targetTime) 이전의 데이터를 가져오는 메서드 (백테스팅용)*/
     public List<CandleDTO> getHistoricalCandles(String market, int unit,
                                                  LocalDateTime targetTime, int limit) {
         List<CandleDTO> list = new ArrayList<>();
@@ -87,22 +76,8 @@ public class CandleDAO {
         return list;
     }
 
-    // ════════════════════════════════════════════════════
-    //  ★ 신규: 뷰포트 페이징용 시간 범위 조회
-    // ════════════════════════════════════════════════════
-
-    /**
-     * [뷰포트 페이징] from ~ to 시간 범위의 캔들을 ASC 순으로 조회합니다.
-     *
-     * 30만 개의 1분봉 데이터에서 현재 화면에 보이는 구간 + 버퍼만 가져올 때 사용합니다.
-     * DESC LIMIT 방식과 달리 시간 범위를 직접 지정하므로, 어느 구간으로 드래그해도
-     * 해당 구간의 데이터만 DB에서 효율적으로 읽어옵니다.
-     *
-     * @param market 종목 코드 (예: "KRW-BTC")
-     * @param unit   타임프레임 분 단위 (예: 1 = 1분봉)
-     * @param from   조회 시작 시각 (포함)
-     * @param to     조회 종료 시각 (포함)
-     * @return ASC 정렬된 CandleDTO 리스트
+    /*
+     * 뷰포트 페이징 from(시작시각) ~ to(종료시각) 시간 범위의 캔들을 오름차순(ASC) 순으로 조회
      */
     public List<CandleDTO> getCandlesInRange(String market, int unit,
                                               LocalDateTime from, LocalDateTime to) {
@@ -131,18 +106,16 @@ public class CandleDAO {
         return list;
     }
 
-    /**
-     * [뷰포트 페이징 + 백테스팅] from ~ min(to, targetTime) 범위 조회.
-     *
+    /*(뷰포트 페이징 + 백테스팅) from ~ min(to, targetTime) 범위 조회.
+     * 
      * 백테스팅 모드에서 드래그/줌 시 targetTime을 초과하는 미래 데이터가
      * 보이지 않도록 상한을 targetTime으로 클램핑합니다.
      *
-     * @param market      종목 코드
-     * @param unit        타임프레임 분 단위
-     * @param from        조회 시작 시각
-     * @param to          조회 종료 시각 (targetTime으로 클램핑됨)
-     * @param targetTime  백테스팅 기준 시각
-     * @return ASC 정렬된 CandleDTO 리스트
+     *market      종목 코드
+     *unit        타임프레임 분 단위
+     *from        조회 시작 시각
+     *to          조회 종료 시각 (targetTime으로 클램핑됨)
+     *targetTime  백테스팅 기준 시각
      */
     public List<CandleDTO> getCandlesInRangeHistorical(String market, int unit,
                                                         LocalDateTime from, LocalDateTime to,

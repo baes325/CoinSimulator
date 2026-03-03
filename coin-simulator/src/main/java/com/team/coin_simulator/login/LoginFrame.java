@@ -80,7 +80,7 @@ public class LoginFrame extends JFrame {
         logo.setFont(new Font("Arial", Font.BOLD, 32));
         logo.setForeground(new Color(33, 99, 184));
         logo.setAlignmentX(Component.CENTER_ALIGNMENT);
-
+        
         JLabel subtitle = new JLabel("로그인");
         subtitle.setFont(fontPlain);
         subtitle.setForeground(Color.GRAY);

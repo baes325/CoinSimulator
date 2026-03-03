@@ -39,7 +39,10 @@ import org.jfree.data.xy.OHLCDataset;
  */
 public class CandleChartPanel extends JPanel {
 
-    // ── 타임프레임 정의 (분 단위) ────────────────────────
+	/*=============
+	 * 필드
+	 * =============*/
+    /*타임프레임 분단위 정의*/
     private static final int TF_1M   = 1;
     private static final int TF_30M  = 30;
     private static final int TF_1H   = 60;
@@ -47,6 +50,7 @@ public class CandleChartPanel extends JPanel {
     private static final int TF_1D   = 1440;
     private static final int TF_1MON = 43200;
 
+    /*타임프레임별 캔들차트 초기 캔들 개수*/
     private static final int DISPLAY_1M   = 55;
     private static final int DISPLAY_30M  = 55;
     private static final int DISPLAY_1H   = 55;
@@ -54,35 +58,39 @@ public class CandleChartPanel extends JPanel {
     private static final int DISPLAY_1D   = 55;
     private static final int DISPLAY_1MON = 55;
 
-    private static final int    PAGE_BUFFER        = 300;
-    private static final double PREFETCH_THRESHOLD = 0.25;
+    /*페이징 설정*/
+    private static final int    PAGE_BUFFER = 300; // 한번에 불러올 데이터 양
+    private static final double PREFETCH_THRESHOLD = 0.25; // 데이터를 불러올 지점(남은 데이터가 25%인 지점)
+    
+    /*최대 확대/축소 캔들 개수 제한*/
     private static final int    MIN_VISIBLE_CANDLES = 5;
     private static final int    MAX_VISIBLE_CANDLES = 200;
 
-    // ── 보조지표 ON/OFF 상태 ─────────────────────────────
+    /*보조지표 ON/OFF 상태*/
     private boolean showMA5       = false;
     private boolean showMA20      = false;
     private boolean showMA60      = false;
     private boolean showBollinger = false;
     private boolean showVolume    = false;
 
-    /** 볼린저 밴드 파라미터 */
+    /*볼린저 밴드 파라미터 */
     private static final int    BB_PERIOD     = 20;
     private static final double BB_MULTIPLIER = 2.0;
 
-    /** 거래량 패널 높이 비율 (차트 전체 대비) */
+    /*차트 대비 거래량 표시 비율*/
     private static final double VOLUME_PANEL_RATIO = 0.18;
 
-    // ── 관심 코인 관련 필드 ──────────────────────────────
+    /*관심 코인 관련 필드*/
     private String currentUserId;
     private Runnable watchlistListener;
     private JButton btnWatchlist;
     private DAO.WatchListDAO watchListDAO = new DAO.WatchListDAO();
 
-    // ── 타임프레임별 페이지 캐시 ─────────────────────────
+    /*타임프레임별 페이지 캐시*/
+    //차트 데이터를 효율적으로 관리하기 위해 만든 내부 데이터 저장소
     private static class PageCache {
-        List<CandleDTO> candles = new ArrayList<>();
-        long fromMs = -1;
+        List<CandleDTO> candles = new ArrayList<>(); //캔들 OHLC 데이터 객체를 담고있는 리스트
+        long fromMs = -1; //아직 데이터를 불러온 적이 없음(-1)
         long toMs   = -1;
         volatile boolean prefetchInProgress = false;
 
@@ -92,13 +100,14 @@ public class CandleChartPanel extends JPanel {
             toMs   = -1;
             prefetchInProgress = false;
         }
-
         boolean isInitialized() { return fromMs >= 0 && toMs >= 0; }
     }
 
+    /*타임프레임을 바꿀 때 마다 서버에서 데이터를 새로 받지 않도록
+     *비어있는 PageCache 바구니 생성*/
     private final Map<Integer, PageCache> cacheMap = new HashMap<>();
 
-    // ── 차트 컴포넌트 ────────────────────────────────────
+    /*차트 컴포넌트*/
     private JFreeChart chart;
     private XYPlot plot;
     private OverlayChartPanel chartPanel;
@@ -106,39 +115,39 @@ public class CandleChartPanel extends JPanel {
     private JButton selectedButton;
     private JLabel lblChartTitle;
 
-    // ── 초기 상태 ────────────────────────────────────────
+    /*초기상태*/
     private String currentMarket   = "KRW-BTC";
     private int    currentTimeframe = TF_1M;
     private Point  lastMousePoint;
 
-    // ── 백테스팅 상태 ─────────────────────────────────────
+    /*백테스팅 상태*/
     private LocalDateTime backtestTargetTime = null;
 
-    // ── 실시간 라이브 캔들 ────────────────────────────────
+    /*실시간 Live 캔들*/
     private CandleDTO     liveCandle            = null;
     private LocalDateTime liveCandleMinuteStart = null;
 
-    // ── Ghost 캔들 ───────────────────────────────────────
+    /*Ghost 캔들*/
     private final List<CandleDTO> ghostCandles  = new ArrayList<>();
     private static final int MAX_GHOST_CANDLES  = 10;
 
-    // ── 실시간 타이머 ────────────────────────────────────
+    /*실시간 타이머*/
     private Timer liveTimer;
     private static final int LIVE_RENDER_MS = 500;
     private volatile double latestLivePrice     = -1;
     private volatile long   latestLiveTimestamp = -1;
 
-    // ── 웹소켓 ───────────────────────────────────────────
+    /*웹소켓*/
     private UpbitWebSocket webSocketClient;
 
-    // ── 현재가 박스 표시 ──────────────────────────────────
+    /*현재가 박스*/
     private double  overlayPrice  = Double.NaN;
     private boolean overlayRising = true;
 
 
-    // ════════════════════════════════════════════════════
-    //  생성자
-    // ════════════════════════════════════════════════════
+    /*================
+     * 생성자
+     * ===============*/
     public CandleChartPanel(String title) {
         setLayout(new BorderLayout());
         setBackground(Color.WHITE);
@@ -164,35 +173,37 @@ public class CandleChartPanel extends JPanel {
         startLiveTimer();
         connectWebSocket();
     }
-
+    
+    /*타임프레임별로 빈 바구니 생성*/
     private void initCacheMap() {
         for (int tf : new int[]{TF_1M, TF_30M, TF_1H, TF_1D, TF_1MON}) {
             cacheMap.put(tf, new PageCache());
         }
     }
 
+    //MainFrame에서 사용
     public void setUserIdAndListener(String userId, Runnable listener) {
-        this.currentUserId    = userId;
-        this.watchlistListener = listener;
-        updateWatchlistButtonState();
+        this.currentUserId = userId; //현재 로그인한 사용자 ID 저장
+        this.watchlistListener = listener; //상태 변경 시 실행할 리스너(콜백) 저장
+        updateWatchlistButtonState(); //저장된 ID를 바탕으로 버튼 상태 업데이트(★/☆)
     }
 
 
-    // ════════════════════════════════════════════════════
-    //  차트 UI 설정
-    // ════════════════════════════════════════════════════
-
+    /* 차트 UI 설정*/
     private void configureChartUI() {
-        plot.setRangeAxisLocation(AxisLocation.TOP_OR_RIGHT);
+    	//Y축 가격 영역
+        plot.setRangeAxisLocation(AxisLocation.TOP_OR_RIGHT); //Y축의 오른쪽 배치
         NumberAxis yAxis = (NumberAxis) plot.getRangeAxis();
-        yAxis.setAutoRangeIncludesZero(false);
-        yAxis.setNumberFormatOverride(buildPriceFormat());
+        yAxis.setAutoRangeIncludesZero(false); //0을 포함하지 않고 데이터 범위에 맞춰 자동 범위 지정
+        yAxis.setNumberFormatOverride(buildPriceFormat()); //가격 포멧 적용(1,000 단위 콤마)
 
+        //X축 시간 영역
         DateAxis domainAxis = (DateAxis) plot.getDomainAxis();
         domainAxis.setDateFormatOverride(new SimpleDateFormat("MM/dd HH:mm"));
-        domainAxis.setTickLabelFont(new Font("Nanum Gothic", Font.PLAIN, 11));
-        domainAxis.setAutoTickUnitSelection(true);
+        domainAxis.setTickLabelFont(new Font("나눔고딕", Font.PLAIN, 11));
+        domainAxis.setAutoTickUnitSelection(true); //차트 확대,축소할 떄 시간 간격을 자동으로 조절
 
+        //캔들 그리기
         CandlestickRenderer renderer = new CandlestickRenderer();
         renderer.setAutoWidthMethod(CandlestickRenderer.WIDTHMETHOD_AVERAGE);
         renderer.setAutoWidthFactor(0.7);
@@ -203,17 +214,18 @@ public class CandleChartPanel extends JPanel {
         plot.setRenderer(renderer);
     }
 
+    /*차트 기본 기능 설정*/
     private void setupChartPanel() {
         chartPanel = new OverlayChartPanel(chart);
         chartPanel.setPreferredSize(new Dimension(900, 500));
         chartPanel.setRangeZoomable(false);
         chartPanel.setDomainZoomable(false);
-        chartPanel.setMouseWheelEnabled(false);
+        chartPanel.setMouseWheelEnabled(false); 
         plot.setDomainPannable(true);
         plot.setRangePannable(true);
 
         chartPanel.addMouseWheelListener(e -> {
-            handleFixedRightZoom(e.getWheelRotation());
+            handleFixedRightZoom(e.getWheelRotation()); //휠을 돌릴 때 호출
             SwingUtilities.invokeLater(() -> chartPanel.repaint());
         });
 
@@ -248,22 +260,20 @@ public class CandleChartPanel extends JPanel {
         });
     }
 
-    // ════════════════════════════════════════════════════
-    //  상단 영역 (타임프레임 버튼 + 보조지표 드롭다운)
-    // ════════════════════════════════════════════════════
-
+    /*상단 패널(타임프레임 버튼, 보조지표 드롭다운)*/
     private void createTopArea() {
         JPanel topContainer = new JPanel();
         topContainer.setLayout(new BoxLayout(topContainer, BoxLayout.Y_AXIS));
         topContainer.setBackground(Color.WHITE);
 
-        // ── 1행: 타임프레임 버튼(왼쪽) + 보조지표 드롭다운(오른쪽) ──
+        //1행:타임프레임 버튼(왼쪽) + 보조지표 드롭다운(오른쪽)
         JPanel buttonRow = new JPanel(new BorderLayout());
         buttonRow.setBackground(Color.WHITE);
 
-        // 타임프레임 버튼 패널
+        // 타임프레임 버튼 패널(왼쪽)
         JPanel tfPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 4));
         tfPanel.setBackground(Color.WHITE);
+        tfPanel.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 0)); //왼쪽 10px 여백
 
         String[] labels     = {"1분",  "30분",  "1시간", "4시간", "1일",   "1달"};
         int[]    timeframes = {TF_1M, TF_30M, TF_1H,  TF_4H,  TF_1D, TF_1MON};
@@ -288,16 +298,16 @@ public class CandleChartPanel extends JPanel {
             tfPanel.add(button);
         }
 
-        // 보조지표 드롭다운 패널
+        // 보조지표 드롭다운 패널(오른쪽)
         JPanel indicatorPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 4));
         indicatorPanel.setBackground(Color.WHITE);
         indicatorPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 90));
         indicatorPanel.add(createIndicatorDropdown());
 
-        buttonRow.add(tfPanel,        BorderLayout.WEST);
+        buttonRow.add(tfPanel, BorderLayout.WEST);
         buttonRow.add(indicatorPanel, BorderLayout.EAST);
 
-        // ── 2행: 코인 이름 + 관심코인 ──
+        //2행: 코인 이름 + 관심코인
         JPanel titlePanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
         titlePanel.setBackground(Color.WHITE);
 
@@ -317,24 +327,25 @@ public class CandleChartPanel extends JPanel {
 
         titlePanel.add(lblChartTitle);
         titlePanel.add(btnWatchlist);
-
-        topContainer.add(buttonRow);
+        
         topContainer.add(titlePanel);
+        topContainer.add(buttonRow);
+        
         add(topContainer, BorderLayout.NORTH);
     }
 
-    /**
-     * 보조지표 드롭다운 버튼을 생성합니다.
-     * 버튼 클릭 시 팝업 메뉴가 나타나며 각 항목을 체크박스로 ON/OFF합니다.
+    /*
+     * 보조지표 드롭다운 버튼 생성
+     * 버튼 클릭 시 팝업 메뉴가 나타나며 각 항목을 체크박스로 ON/OFF
      */
     private JButton createIndicatorDropdown() {
         JButton btn = new JButton("보조지표");
-        btn.setFocusPainted(false);
+        btn.setFocusPainted(false); //버튼 선택시 글자 주위 점선 안보이게
         btn.setBackground(Color.LIGHT_GRAY);
         btn.setForeground(Color.BLACK);
         btn.setFont(new Font("맑은 고딕", Font.BOLD, 12));
-        btn.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
-        //btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10)); //버튼 내부 상,하,좌,우 여백(px)
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)); //올렸을 때 손가락 커서
 
         JPopupMenu popup = buildIndicatorPopup(btn);
 
@@ -1483,10 +1494,9 @@ public class CandleChartPanel extends JPanel {
     }
 
 
-    // ════════════════════════════════════════════════════
-    //  웹소켓
-    // ════════════════════════════════════════════════════
-
+    /*=============
+     * 웹소켓 연결
+     * =============*/
     private void connectWebSocket() {
         disconnectWebSocket();
         webSocketClient = new UpbitWebSocket(currentMarket, this);
@@ -1501,9 +1511,9 @@ public class CandleChartPanel extends JPanel {
     }
 
 
-    // ════════════════════════════════════════════════════
-    //  공개 API
-    // ════════════════════════════════════════════════════
+    /*===============
+     * 공개API
+     * ==============*/
 
     public void changeMarket(String coinSymbol) {
         this.currentMarket = "KRW-" + coinSymbol;
