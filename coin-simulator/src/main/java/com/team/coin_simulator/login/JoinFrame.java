@@ -94,6 +94,7 @@ public class JoinFrame extends JFrame {
             @Override
             public void actionPerformed(ActionEvent e) {
                 String email = fields[0].getText().trim();
+                email = email.replaceAll("\\s+", ""); // ✅ 여기 추가 (공백 제거)
                 String pw = new String(((JPasswordField) fields[1]).getPassword());
                 String pwConfirm = new String(((JPasswordField) fields[2]).getPassword());
                 String phone = fields[3].getText().trim();
@@ -272,8 +273,17 @@ public class JoinFrame extends JFrame {
     // ✅ (추가) 이메일 형식 검증
     private boolean isValidEmail(String email) {
         if (email == null) return false;
+
         email = email.trim();
-        return email.matches("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
+
+        // ✅ 쉼표 들어가면 무조건 실패
+        if (email.contains(",")) return false;
+
+        // ✅ 공백도 금지
+        if (email.contains(" ")) return false;
+
+        // ✅ 기본 이메일 형식 강제 (도메인 사이에 점이 있어야 함)
+        return email.matches("^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$");
     }
 
     // ✅ (추가) 휴대폰 11자리 검증(010~019 포함)
