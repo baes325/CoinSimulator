@@ -43,6 +43,10 @@ public class AlertDialog extends JDialog {
 
         // 창이 켜질 때 DB에서 내 알림 목록을 불러와서 그려줍니다.
         refreshAlertList();
+        // 서비스 엔진에게 내 창을 등록해서, 알림 시 새로고침 지시를 받을 수 있게 함
+        if (this.alertService != null) {
+            this.alertService.setDialog(this);
+        }
     }
 
     // 알림 추가 폼
@@ -106,7 +110,7 @@ public class AlertDialog extends JDialog {
     }
 
     // DB에서 내 알림들을 가져와서 화면에 그려주는 메서드
-    private void refreshAlertList() {
+    public void refreshAlertList() {
         listPanel.removeAll(); // 기존에 그려진 목록 싹 지우기
         
         List<PriceAlertDTO> alerts = alertDAO.getAllAlertsForUser(userId);

@@ -21,6 +21,9 @@ public class PriceAlertService implements UpbitWebSocketDao.TickerListener {
     private JFrame mainFrame;
     private String currentUser;
     private PriceAlertDAO alertDAO;
+    
+    // 현재 열려있는 알림 설정창을 기억하는 변수
+    private AlertDialog activeDialog = null;
 
     //[지정가 알림용] 메모리 캐시 (DB 과부하 방지)
     private List<PriceAlertDTO> activeAlerts;
@@ -38,6 +41,11 @@ public class PriceAlertService implements UpbitWebSocketDao.TickerListener {
         reloadAlertsFromDB();
         
         UpbitWebSocketDao.getInstance().addListener(this);
+    }
+    
+    // AlertDialog가 열릴 때 자신을 등록하는 메서드
+    public void setDialog(AlertDialog dialog) {
+        this.activeDialog = dialog;
     }
     
     // 새 알림이 추가되었을 때 캐시를 갱신하는 메서드
@@ -99,9 +107,15 @@ public class PriceAlertService implements UpbitWebSocketDao.TickerListener {
                     
                     String conditionKr = alert.getConditionType().equals("ABOVE") ? "상승 돌파" : "하락 돌파";
                     String msg = String.format("[가격 알림] %s 코인이 %,.0f원에 도달했습니다! (%s)", 
-                                               market, target, conditionKr);
+                                                market, target, conditionKr);
                     
-                    SwingUtilities.invokeLater(() -> NotificationUtil.showToast(mainFrame, msg));
+                    SwingUtilities.invokeLater(() -> {
+                        NotificationUtil.showToast(mainFrame, msg);
+                        // 팝업창이 떠 있다면, 즉시 화면을 새로고침 하라고 명령!
+                        if (activeDialog != null && activeDialog.isVisible()) {
+                            activeDialog.refreshAlertList();
+                        }
+                    });
                 }).start();
             }
         }
@@ -130,7 +144,7 @@ public class PriceAlertService implements UpbitWebSocketDao.TickerListener {
             if (rate.abs().compareTo(new BigDecimal("3.0")) >= 0) {
                 
                 String type = rate.compareTo(BigDecimal.ZERO) > 0 ? "급등" : "급락";
-                String msg = String.format("⚠️ [%s] %s 발생! (%.2f%% 변동)", symbol, type, rate);
+                String msg = String.format("[%s] %s 발생! (%.2f%% 변동)", symbol, type, rate);
                 javax.swing.SwingUtilities.invokeLater(() -> 
                     com.team.coin_simulator.Alerts.NotificationUtil.showToast(mainFrame, msg)
                 );
