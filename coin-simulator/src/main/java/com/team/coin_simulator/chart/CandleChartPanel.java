@@ -1259,6 +1259,15 @@ public class CandleChartPanel extends JPanel {
         if (found) {
             NumberAxis yAxis = (NumberAxis) plot.getRangeAxis();
             double margin = (maxHigh - minLow) * 0.05;
+            
+            // 최고가와 최저가가 같아서 margin이 0이 되는 현상 방지
+            if (margin == 0.0) {
+                margin = maxHigh * 0.005; // 현재 가격의 0.5%를 강제로 상하 여백으로 줌
+                if (margin == 0.0) { 
+                    margin = 1.0; // 혹시라도 가격이 0원일 경우를 대비한 최후의 방어선
+                }
+            }
+
             yAxis.setRange(minLow - margin, maxHigh + margin);
             yAxis.setNumberFormatOverride(buildPriceFormat());
         }
