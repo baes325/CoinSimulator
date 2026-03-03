@@ -23,6 +23,41 @@ public class LoginFrame extends JFrame {
     private final Font fontPlain = new Font("맑은 고딕", Font.PLAIN, 12);
     private final Font fontSmall = new Font("맑은 고딕", Font.PLAIN, 11);
 
+ // LoginFrame 클래스 안에 추가
+    private String maskId(String id) {
+        if (id == null || id.isBlank()) return id;
+
+        // 이메일인 경우: local-part만 마스킹
+        if (id.contains("@")) {
+            String[] parts = id.split("@", 2);
+            String local = parts[0];
+            String domain = parts[1];
+
+            int keep;
+            int n = local.length();
+
+            // 길이에 따라 앞에 보여줄 글자 수 조절
+            if (n <= 2) keep = 1;        // a*, ab*
+            else if (n <= 4) keep = 2;   // ab**, abcd -> ab**
+            else keep = 3;               // abc****...
+
+            String visible = local.substring(0, keep);
+            int starCount = Math.max(2, n - keep); // 최소 ** 보장
+            return visible + "*".repeat(starCount) + "@" + domain;
+        }
+
+        // 이메일이 아닌 경우(그냥 아이디): 뒤를 마스킹
+        int n = id.length();
+        int keep;
+        if (n <= 2) keep = 1;
+        else if (n <= 4) keep = 2;
+        else keep = 3;
+
+        String visible = id.substring(0, keep);
+        int starCount = Math.max(2, n - keep);
+        return visible + "*".repeat(starCount);
+    }
+    
     public LoginFrame() {
         setTitle("ONBIT 로그인");
         setSize(460, 700);
@@ -154,50 +189,73 @@ public class LoginFrame extends JFrame {
                 String foundId = UserDAO.findIdByPhone(phone);
                 if (foundId != null) {
                     JOptionPane.showMessageDialog(LoginFrame.this,
-                            "찾으시는 아이디는 [" + foundId + "] 입니다.", "아이디 찾기 성공", JOptionPane.INFORMATION_MESSAGE);
+                    	"찾으시는 아이디는 [" + maskId(foundId) + "] 입니다.",
+                        "아이디 찾기 성공",
+                        JOptionPane.INFORMATION_MESSAGE
+                    );
                 } else {
-                    JOptionPane.showMessageDialog(LoginFrame.this,
-                            "해당 번호로 가입된 정보가 없습니다.", "찾기 실패", JOptionPane.ERROR_MESSAGE);
+           
+                	}
                 }
             }
-        });
+        );
 
         findPwLabel.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                String input = JOptionPane.showInputDialog(LoginFrame.this, "가입하신 이메일 주소를 입력해주세요.");
-                if (input == null) return;
 
-                final String email = input.trim();
-                if (email.isEmpty()) return;
+                JTextField emailField = new JTextField();
+                JTextField phoneField = new JTextField();
 
-                if (UserDAO.isIdDuplicate(email)) {
-                    final String tempPw = "ONBIT" + (int) (Math.random() * 89999 + 10000);
+                JPanel panel = new JPanel(new GridLayout(0, 1, 0, 8));
+                panel.add(new JLabel("아이디(이메일)를 입력하세요:"));
+                panel.add(emailField);
+                panel.add(new JLabel("가입 시 등록한 휴대폰 번호(- 제외):"));
+                panel.add(phoneField);
 
-                    new Thread(() -> {
-                        try {
-                            EmailManager.sendMail(
-                                    email,
-                                    "[ONBIT] 임시 비밀번호 안내",
-                                    "요청하신 임시 비밀번호는 " + tempPw + " 입니다."
-                            );
+                int result = JOptionPane.showConfirmDialog(
+                        LoginFrame.this,
+                        panel,
+                        "비밀번호 찾기(임시 비밀번호 발급)",
+                        JOptionPane.OK_CANCEL_OPTION,
+                        JOptionPane.PLAIN_MESSAGE
+                );
+                if (result != JOptionPane.OK_OPTION) return;
 
-                            UserDAO.updatePassword(email, tempPw);
+                String email = emailField.getText().trim();
+                String phone = phoneField.getText().trim().replaceAll("[^0-9]", "");
 
-                            SwingUtilities.invokeLater(() ->
-                                    JOptionPane.showMessageDialog(LoginFrame.this, "임시 비밀번호가 메일로 발송되었습니다."));
-                        } catch (Exception ex) {
-                            ex.printStackTrace();
-                            SwingUtilities.invokeLater(() ->
-                                    JOptionPane.showMessageDialog(LoginFrame.this,
-                                            "메일 발송에 실패했습니다. 설정 및 앱 비밀번호를 확인하세요.",
-                                            "메일 오류", JOptionPane.ERROR_MESSAGE));
-                        }
-                    }).start();
-
-                } else {
-                    JOptionPane.showMessageDialog(LoginFrame.this, "등록되지 않은 사용자 정보입니다.");
+                if (email.isEmpty() || phone.isEmpty()) {
+                    JOptionPane.showMessageDialog(LoginFrame.this, "이메일과 휴대폰 번호를 모두 입력해주세요.");
+                    return;
                 }
+
+                // 1) 이메일+휴대폰 일치 검증
+                boolean ok = UserDAO.verifyUserByEmailAndPhone(email, phone);
+                if (!ok) {
+                    JOptionPane.showMessageDialog(LoginFrame.this,
+                            "입력한 정보와 일치하는 계정이 없습니다.",
+                            "발급 실패",
+                            JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
+                // 2) 임시 비밀번호 생성
+                String tempPw = "ONBIT" + (int) (Math.random() * 89999 + 10000);
+
+                // 3) DB에 임시 비밀번호 저장 (+ must_change_password=1이면 더 좋음)
+                boolean issued = UserDAO.issueTemporaryPassword(email, tempPw);
+                if (!issued) {
+                    JOptionPane.showMessageDialog(LoginFrame.this,
+                            "임시 비밀번호 발급(DB 업데이트)에 실패했습니다.",
+                            "DB 오류",
+                            JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
+                // 4) ✅ 여기! JOptionPane 대신 복사 가능한 다이얼로그 띄우기
+                TempPasswordDialog dialog = new TempPasswordDialog(LoginFrame.this, tempPw);
+                dialog.setVisible(true);
             }
         });
 
