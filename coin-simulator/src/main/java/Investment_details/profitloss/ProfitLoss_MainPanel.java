@@ -114,24 +114,31 @@ public class ProfitLoss_MainPanel extends JPanel {
             return;
         }
 
-        // [개념 분리] 선택된 기간의 실현 손익 및 수수료 직접 합산
-        // DB의 전체 누적이 아닌, 현재 화면에 로드된 기간(currentExecutions) 동안의 손익만 구함
-        long periodRealizedPnl = 0;
-        long periodFee = 0;
+        long periodRealizedPnl = 0; // 매도 실현 손익 (매도 수수료 기 차감됨)
+        long buyFeeTotal = 0;       // 매수 수수료 합산
+        long totalFee = 0;          // 전체 수수료 합산 (단순 표시용)
 
         for (ExecutionDTO exec : currentExecutions) {
-            // 수수료: 매수/매도 모든 체결 건 합산
+            // 1. 전체 수수료 합산 (화면 표시용)
             if (exec.getFee() != null) {
-                periodFee += exec.getFee().longValue();
+                totalFee += exec.getFee().longValue();
             }
-            // 실현손익: 매도(ASK) 체결 건만 합산
-            if ("ASK".equals(exec.getSide()) && exec.getRealizedPnl() != null) {
-                periodRealizedPnl += exec.getRealizedPnl().longValue();
+            
+            if ("ASK".equals(exec.getSide())) {
+                // 2. 매도 체결 시: DB에 저장된 실현 손익(매도 수수료가 이미 빠진 금액) 합산
+                if (exec.getRealizedPnl() != null) {
+                    periodRealizedPnl += exec.getRealizedPnl().longValue();
+                }
+            } else if ("BID".equals(exec.getSide())) {
+                // 3. 매수 체결 시: 실현 손익에는 안 들어가지만, 내 잔고에서 수수료가 빠져나갔으므로 따로 모아둠
+                if (exec.getFee() != null) {
+                    buyFeeTotal += exec.getFee().longValue();
+                }
             }
         }
 
-        // 기간 순손익 = 기간 내 실현손익 - 기간 내 수수료
-        long periodNetPnl = periodRealizedPnl - periodFee;
+        // 올바른 순손익 계산: 매도수익(매도수수료 차감완료) - 매수수수료
+        long periodNetPnl = periodRealizedPnl - buyFeeTotal;
 
         // 기간 수익률 = (해당 기간 순손익 / 초기 자본금) * 100
         double periodYield = initialSeedMoney > 0
@@ -141,8 +148,8 @@ public class ProfitLoss_MainPanel extends JPanel {
         // 평균 투자금액 (단순 참고용 유지)
         long avgInvestment = initialSeedMoney + (periodNetPnl / 2);
 
-        // UI 갱신
-        summaryPanel.updateSummary(periodNetPnl, periodYield, avgInvestment, periodFee);
+        // UI 갱신 (화면에는 전체 수수료 totalFee를 보여줌)
+        summaryPanel.updateSummary(periodNetPnl, periodYield, avgInvestment, totalFee);
         chartAreaPanel.updateCharts(currentExecutions, userId, sessionId);
         tablePanel.updateTable(currentExecutions, userId);
 
